@@ -7,6 +7,8 @@
 import numpy as np 
 import matplotlib.pyplot as plt 
 from scipy.optimize import curve_fit as curve_fit
+import os 
+import h5py as h5
 
 def linear(x, m, b): 
     """
@@ -72,6 +74,42 @@ def rgb2gray(rgb):
 px_to_um_10 = 1024 / 650
 px_to_um_20 = 1024 / 320
 px_to_um_100 = 1024 / 65
+
+
+def create_sample_dict(directory, settings_i_want=[], settings_loc=[]): 
+    sorted_files = os.listdir(directory)
+    sorted_files = [f for f in sorted_files if '.tif' in f or '.h5' in f]
+    sorted_files.sort()
+    sample_dict = {}
+
+    for f in sorted_files: 
+        fn = f'{directory}/{f}' 
+        time = fn.split('/')[-1].split('_')[1]
+        # date = fn.split('/')[-1].split('_')[0]
+        measurement = '_'.join(fn.replace('.h5', '').split('/')[-1].split('_')[2:])
+        if 'h5' in f: 
+            try: 
+                file = h5.File(fn)
+                name = dict(file['app/settings'].attrs.items())['sample']
+                if name not in sample_dict.keys(): 
+                    sample_dict[name] = {fn:{'time':time, 'measurement':measurement, 'settings' : extract_h5_settings_HiP(file, settings_i_want, settings_loc)}}
+                else: 
+                    sample_dict[name][fn] = {'time':time, 'measurement':measurement, 'settings' : extract_h5_settings_HiP(file, settings_i_want, settings_loc)}
+            except OSError: 
+                pass 
+    return sample_dict
+
+def extract_h5_settings_HiP(file, settings_i_want, settings_loc): 
+    """
+    Extract desired settings from an h5 file 
+    """
+    settings = {}
+
+    # all_settings = dict(file[f'{preamble}/settings'].attrs.items())
+
+    for i_want,loc in zip(settings_i_want, settings_loc): 
+        settings[i_want] = dict(file[f'{loc}'].attrs.items())[i_want]
+    return settings
 
 
 
