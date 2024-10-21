@@ -3,4 +3,5 @@ scipy==1.12.0
 h5py
 matplotlib==3.8.4
 lmfit==1.1.0
-
+tqdm 
+pandas
