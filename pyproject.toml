@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools >= 64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "OTRaPy"
+version = "0.0.1"
+authors = [
+  {name = "Amalya Johnson", email = "amalyaj@stanford.edu"}
+]
+maintainers = [
+  {name = "Amalya Johnson", email = "amalyaj@stanford.edu"}
+]
+description = "Optothermal Raman Method for Python"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
