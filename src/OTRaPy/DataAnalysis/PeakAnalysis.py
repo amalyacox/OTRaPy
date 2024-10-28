@@ -279,10 +279,10 @@ def get_spot_size(
     sigy_err /= scale
     ax2.pcolormesh(xx, yy, fit)
     ax2.set_title(
-        rf"$\sigma_x=${round(sigx,2)} $\mu$m, $\sigma_y=${round(sigy,2)} $\mu$m"
+        rf"$\sigma_x=${round(sigx*2,2)} $\mu$m, $\sigma_y=${round(sigy*2,2)} $\mu$m"
     )
     f.suptitle(name)
-    return sigx, sigy, sigx_err, sigy_err
+    return sigx*2, sigy*2, sigx_err*2, sigy_err*2
 
 
 def fit_dwdp(pwr, peak, peak_err=None, fit_err=False):
