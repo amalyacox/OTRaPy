@@ -74,8 +74,8 @@ class ProcessedData:
         gerr,
         w0=0,
         w0_err=0,
-        l0=0,
-        l0_err=0,
+        w1=0,
+        w1_err=0,
         h=3E-9,
 
         notes="",
@@ -94,7 +94,8 @@ class ProcessedData:
             "w0_err": w0_err,
             "w1": w1,
             "w1_err": l0_err,
-            "notes": notes,
+            "h" : h, 
+            "notes" : notes
         }
         self.database[sample + "_" + date] = this_row
 
