@@ -3,10 +3,10 @@
 
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
-from scipy.optimize import curve_fit
-from scipy.optimize import minimize
+from scipy.optimize import curve_fit, minimize, least_squares
 import warnings
 from OTRaPy.utils import *
+from scipy.interpolate import interp1d
 
 
 class RamanSolver:
@@ -25,8 +25,8 @@ class RamanSolver:
         alpha: float = 0.07,
         w0: float = 0.4e-6,
         l0: float = 0.4e-6,
-        w0_dTdQiso = None,
-        l0_dTdQiso = None,
+        w0_dTdQg = None,
+        l0_dTdQg = None,
         w0_dTdQx = None, 
         l0_dTdQx = None, 
         w0_dTdQy = None, 
@@ -42,11 +42,13 @@ class RamanSolver:
         # but will ultimately probably need error propagation?
 
         self.h = h  # thickness (m)
-        self.w0 = w0  # gaussian beam width in x-direction (m)
-        self.l0 = l0  # gaussian beam width in y-direction (m)
+
+        self.update_l0(l0) # gaussian beam width in y-direction (m)
+        self.update_w0(w0) # gaussian beam width in x-direction (m)
+
         self.alpha = alpha  # material % absorption at laser wavelength (%)
         
-        self.w0_dTdQiso, self.l0_dTdQiso = w0_dTdQiso, l0_dTdQiso  # gaussian beam width for isotropic measurement
+        self.w0_dTdQg, self.l0_dTdQg = w0_dTdQg, l0_dTdQg  # gaussian beam width for isotropic measurement
         self.w0_dTdQx, self.l0_dTdQx, self.w0_dTdQy, self.l0_dTdQy = w0_dTdQx, l0_dTdQx, w0_dTdQy, l0_dTdQy # gaussian beam width for anisotropic measurements
 
         dx = 2 * self.lx / (self.nx - 1)
@@ -58,6 +60,23 @@ class RamanSolver:
         self.y = np.linspace(-self.ly, self.ly, self.ny)
 
         self.X, self.Y = np.meshgrid(self.x, np.flipud(self.y))
+        self.X = np.broadcast_to(self.X, (len(self.w0), self.nx, self.nx))
+        self.Y = np.broadcast_to(self.Y, (len(self.l0), self.ny, self.ny))
+    
+    def update_w0(self, new_w0): 
+        if type(new_w0) == float or type(new_w0) == np.float64: 
+            self.w0 = np.array([new_w0])
+        else: 
+            self.w0 = new_w0
+        self.w0 = np.broadcast_to(self.w0, (self.nx, self.ny, len(self.w0))).T
+
+    def update_l0(self, new_l0):
+        if type(new_l0) == float or type(new_l0) == np.float64: 
+            self.l0 = np.array([new_l0])
+        else: 
+            self.l0 = new_l0
+        self.l0 = np.broadcast_to(self.l0, (self.nx, self.ny, len(self.l0))).T
+
 
     def generate_qdot(self, Q: float = 1e-3):
         """
@@ -74,6 +93,7 @@ class RamanSolver:
         qdot = coef * np.exp(-(self.X**2 / self.w0**2 + self.Y**2 / self.l0**2))
         self.qdot = qdot
 
+    
     def Txy(
         self,
         kx: float = 62.2,
@@ -107,12 +127,12 @@ class RamanSolver:
 
         """
         error = 1
-        count = 1
 
         self.generate_qdot(Q)
 
-        T = np.ones((self.nx, self.ny)) * Ta
+        T = np.ones(self.X.shape) * Ta
         Tg = T.copy()
+        
 
         if d2h is None:
             d2h = self.delta**2 / self.h
@@ -121,17 +141,17 @@ class RamanSolver:
             ### Might be producing some error with edges?
             # padded_T = np.pad(T, pad_width=1, mode='constant', constant_values=Ta)
 
-            Tx = np.roll(T, -1, axis=1) + np.roll(T, 1, axis=1)
+            Tx = np.roll(T, -1, axis=2) + np.roll(T, 1, axis=2)
 
-            Ty = np.roll(T, -1, axis=0) + np.roll(T, 1, axis=0)
+            Ty = np.roll(T, -1, axis=1) + np.roll(T, 1, axis=1)
 
             T = (kx * (Tx) + ky * (Ty) + d2h * (self.qdot + g * Ta)) / (
                 d2h * g + 2 * kx + 2 * ky
             )
-            T[:, 0] = Ta
+            T[:,:, 0] = Ta
             T[:, -1] = Ta
-            T[-1, :] = Ta
-            T[0, :] = Ta
+            T[:,-1, :] = Ta
+            T[:,0, :] = Ta
             error = np.sqrt(np.sum(np.abs(T - Tg) ** 2))
 
             Tg = T.copy()
@@ -148,13 +168,16 @@ class RamanSolver:
             Array to perform average over
 
         """
+        Tav = []
         exp_factor = np.exp(-(self.X**2 / self.w0**2 + self.Y**2 / self.l0**2))
-        rbs = RectBivariateSpline(self.x, self.y, T * exp_factor)
-        integrated = rbs.integral(-self.lx, self.lx, -self.ly, self.ly)
-        Tav = integrated / (np.pi * self.w0 * self.l0)
+        for i,Ti in enumerate(T*exp_factor): 
+            rbs = RectBivariateSpline(self.x, self.y, Ti)
+            integrated = rbs.integral(-self.lx, self.lx, -self.ly, self.ly)
+            Tav.append((integrated / (np.pi * self.w0[i]* self.l0[i]))[0,0])
+        Tav = np.array(Tav)
         return Tav
 
-    def dTdQ(self, kx: float, ky: float, g: float, Qarr, quick: bool = True, **kwargs):
+    def dTdQ(self, kx: float, ky: float, g: float, Q, quick: bool = True, **kwargs):
         """
         Calculate dTdQ for a given Q range and thermal properties (kx, ky, kg)
 
@@ -166,34 +189,82 @@ class RamanSolver:
             Thermal conductivity in y-direction
         g : float
             Interfacial thermal conductance
-        Qarr : array-like
+        Q : array-like
             Range of input power values
         quick : bool
             Whether or not to calculate the slope as just y2-y1 / x2-x1 (first and last points) or fit a line to the data, default True
 
         """
-        if quick:
-            T1 = self.Txy(kx=kx, ky=ky, g=g, Q=Qarr[0], **kwargs)
-            Tav1 = self.weighted_average(T1)
-            T2 = self.Txy(kx=kx, ky=ky, g=g, Q=Qarr[-1], **kwargs)
-            Tav2 = self.weighted_average(T2)
+        T1 = self.Txy(kx=kx, ky=ky, g=g, Q=Q[0], **kwargs)
+        Tav1 = self.weighted_average(T1)
+        T2 = self.Txy(kx=kx, ky=ky, g=g, Q=Q[-1], **kwargs)
+        Tav2 = self.weighted_average(T2)
 
-            slope = (Tav2 - Tav1) / (Qarr[-1] - Qarr[0])
-            return slope
-        else:
-            Tarr = []
-            for Q in Qarr:
-                T = self.Txy(kx=kx, ky=ky, g=g, Q=Q)
-                Tav = self.weighted_average(T)
-                Tarr.append(Tav)
-            Tarr = np.array(Tarr)
+        slope = (Tav2 - Tav1) / (Q[-1] - Q[0])
+        
+        return slope
+        
+    def dTdQ_sim(self, kx, ky, g, Q,w0,l0,Ta):
+        self.update_l0(l0)
+        self.update_w0(w0)
+        dTdQ = self.dTdQ(kx,ky,g,Q)
+        sim = linear(Q, dTdQ, Ta)
+        return sim
+    
+    def resid_dTdQ(self, kx, ky, g, Q, dTdQ_arr, w0,l0,Ta): 
+        sim = self.dTdQ_sim(kx, ky, g, Q, w0,l0,Ta)
+        # plt.plot(Q, dTdQ_arr)
+        # plt.plot(Q, sim)
+        return (dTdQ_arr - sim)**2
 
-            popt, pcov = curve_fit(linear, Qarr, Tarr)
-            slope = popt[0]
-            return slope, Tarr
+    def resid_full(self, p, dTdQ_x_arr, Qx, w0_dTdQx, l0_dTdQx, 
+                                dTdQ_y_arr, Qy, w0_dTdQy, l0_dTdQy,
+                                dTdQ_g_arr, Qg, w0_dTdQg, l0_dTdQg,Ta): 
+        kx, ky, g = p
+        eq1 = self.resid_dTdQ(kx, ky, g, Qx, dTdQ_x_arr, w0_dTdQx, l0_dTdQx, Ta)
+        eq2 = self.resid_dTdQ(kx, ky, g, Qy, dTdQ_y_arr, w0_dTdQy, l0_dTdQy, Ta)
+        eq3 = self.resid_dTdQ(kx, ky, g, Qg, dTdQ_g_arr, w0_dTdQg, l0_dTdQg, Ta)
+        eqtns = np.concatenate([eq1, eq2, eq3])
+        print(np.sum(eqtns), kx, ky, g)
+        return eqtns
+
+    def minimize_resid_full(self, x0, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
+                                dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
+                                dTdQ_g, Qg, w0_dTdQg, l0_dTdQg,
+                                Ta, **ls_kwargs):
+        
+        root = least_squares(self.resid_full, x0=x0, args=(dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
+                                dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
+                                dTdQ_g, Qg, w0_dTdQg, l0_dTdQg,Ta),**ls_kwargs)
+        return root
+    
+    def resid_full_varyall(self, p, dTdQ_x_arr, Qx,dTdQ_y_arr, Qy, dTdQ_g_arr, Qg, Ta): 
+        kx, ky, g, h, alpha, w0_dTdQx, l0_dTdQx, w0_dTdQg = p #w0_dTdQy, l0_dTdQy,
+        
+        w0_dTdQy = l0_dTdQx # enforcing anisotropic beam to be the same for both measurements 
+        l0_dTdQy = w0_dTdQx
+        l0_dTdQg = w0_dTdQg # enforcing isotropic beam to be perfectly isotropic
+        
+        self.h = h 
+        self.alpha = alpha
+
+        eq1 = self.resid_dTdQ(kx, ky, g, Qx, dTdQ_x_arr, w0_dTdQx, l0_dTdQx, Ta)
+        eq2 = self.resid_dTdQ(kx, ky, g, Qy, dTdQ_y_arr, w0_dTdQy, l0_dTdQy, Ta)
+        eq3 = self.resid_dTdQ(kx, ky, g, Qg, dTdQ_g_arr, w0_dTdQg, l0_dTdQg, Ta)
+        eqtns = np.concatenate([eq1, eq2, eq3])
+        print(np.sum(eqtns), kx, ky, g)
+        return eqtns
+         
+    def minimize_resid_full_varyall(self, x0, dTdQ_x, Qx,dTdQ_y, Qy, dTdQ_g, Qg, Ta, **ls_kwargs):
+        
+        root = least_squares(self.resid_full_varyall, x0=x0, args=(dTdQ_x, Qx,dTdQ_y, Qy, dTdQ_g, Qg, Ta),**ls_kwargs)
+        
+        return root
+         
+
 
     def solve_kx(
-        self, kx, dTdQ_x: float, Qarr, ky: float, g: float, w0_dTdQx : float = 0.4E-6, l0_dTdQx : float = 0.4E-6, verbose: bool = False
+        self, kx, dTdQ_x: float, Qx, ky: float, g: float, w0_dTdQx : float = 0.4E-6, l0_dTdQx : float = 0.4E-6, verbose: bool = False
     ):
         """
         Helper function for scipy.optimize.minimize to solve for kx independently
@@ -204,7 +275,7 @@ class RamanSolver:
             Independent variable for scipy.optimize.minimize. What we are solving for
         dTdQ_x : float
             Experimental value to fit model to and solve for kx
-        Qarr : array-like
+        Qx : array-like
             Range of input power values
         ky : float
             Value for ky at which we are solving for kx
@@ -222,19 +293,20 @@ class RamanSolver:
         if self.w0_dTdQx is not None: 
             w0_dTdQx = self.w0_dTdQx
 
-        assert l0_dTdQx > w0_dTdQx , 'kx is solved when the laser is long in the y-direction, short in the x-direction ("lasery")'
+        # assert l0_dTdQx > w0_dTdQx , 'kx is solved when the laser is long in the y-direction, short in the x-direction ("lasery")'
 
-        self.w0 = w0_dTdQx
-        self.l0 = l0_dTdQx
+        self.update_w0(w0_dTdQx)
+        self.update_l0(l0_dTdQx)
+
         experimental_value = dTdQ_x
 
-        guess = self.dTdQ(kx=kx, ky=ky, g=g, Qarr=Qarr)
+        guess = self.dTdQ(kx=kx, ky=ky, g=g, Q=Qx)
         if verbose:
             print("solving kx:", np.sqrt((guess - experimental_value) ** 2))
         return np.sqrt((guess - experimental_value) ** 2)
 
     def solve_ky(
-        self, ky, dTdQ_y: float, Qarr, kx: float, g: float, w0_dTdQy : float = 0.4E-6, l0_dTdQy : float = 0.4E-6, verbose: bool = False
+        self, ky, dTdQ_y: float, Qy, kx: float, g: float, w0_dTdQy : float = 0.4E-6, l0_dTdQy : float = 0.4E-6, verbose: bool = False
     ):
         """
         Helper function for scipy.optimize.minimize to solve for ky independently
@@ -245,7 +317,7 @@ class RamanSolver:
             Independent variable for scipy.optimize.minimize. What we are solving for
         dTdQ_y : float
             Experimental value to fit model to and solve for ky
-        Qarr : array-like
+        Qy : array-like
             Range of input power values
         kx : float
             Value for ky at which we are solving for ky
@@ -263,19 +335,19 @@ class RamanSolver:
         if self.w0_dTdQy is not None: 
             w0_dTdQy = self.w0_dTdQy
 
-        assert l0_dTdQy < w0_dTdQy , 'ky is solved when the laser is long in the x-direction, short in the y-direction ("laserx")'
+        # assert l0_dTdQy < w0_dTdQy , 'ky is solved when the laser is long in the x-direction, short in the y-direction ("laserx")'
 
-        self.w0 = w0_dTdQy
-        self.l0 = l0_dTdQy
+        self.update_w0(w0_dTdQy)
+        self.update_l0(l0_dTdQy)
 
         experimental_value = dTdQ_y
-        guess = self.dTdQ(kx=kx, ky=ky, g=g, Qarr=Qarr)
+        guess = self.dTdQ(kx=kx, ky=ky, g=g, Q=Qy)
         if verbose:
             print("solving ky:", np.sqrt((guess - experimental_value) ** 2))
         return np.sqrt((guess - experimental_value) ** 2)
 
     def solve_g(
-        self, g, dTdQ_g: float, Qarr, kx: float, ky: float, w0_dTdQiso : float  = 0.4E-6, l0_dTdQiso : float  = 0.4E-6, verbose: bool = False
+        self, g, dTdQ_g: float, Qg, kx: float, ky: float, w0_dTdQg : float  = 0.4E-6, l0_dTdQg : float  = 0.4E-6, verbose: bool = False
     ):
         """
         Helper function for scipy.optimize.minimize to solve for g independently
@@ -287,33 +359,153 @@ class RamanSolver:
             Independent variable for scipy.optimize.minimize. What we are solving for
         dTdQ_g : float
             Experimental value to fit model to and solve for g
-        Qarr : array-like
+        Qg : array-like
             Range of input power values
         kx : float
             Value for ky at which we are solving for g
         ky : float
             Value for g at which we are solving for g
-        w0_dTdQiso : float 
+        w0_dTdQg : float 
             Value for w0 for this experiment 
-        l0_dTdQiso : float 
+        l0_dTdQg : float 
             Value for l0 for this experiment 
         verbose : bool
             print progress, default False
         """
-        if self.l0_dTdQiso is not None: 
-            l0_dTdQiso = self.l0_dTdQiso
-        if self.w0_dTdQiso is not None: 
-            w0_dTdQiso = self.w0_dTdQiso
+        if self.l0_dTdQg is not None: 
+            l0_dTdQg = self.l0_dTdQg
+        if self.w0_dTdQg is not None: 
+            w0_dTdQg = self.w0_dTdQg
 
-        self.w0 = self.w0_dTdQiso
-        self.l0 = self.l0_dTdQiso
+        self.update_w0(w0_dTdQg)
+        self.update_l0(l0_dTdQg)
 
         experimental_value = dTdQ_g
-        guess = self.dTdQ(kx=kx, ky=ky, g=g, Qarr=Qarr)
+        guess = self.dTdQ(kx=kx, ky=ky, g=g, Q=Qg)
 
         if verbose:
             print("solving g:", np.sqrt((guess - experimental_value) ** 2))
         return np.sqrt((guess - experimental_value) ** 2)
+    
+    def solve_k(
+        self, k, dTdQ: float, Q, g: float, w0_dTdQg : float = 0.4E-6, l0_dTdQg : float = 0.4E-6, verbose: bool = False
+    ):
+        """
+        Helper function for scipy.optimize.minimize to solve for kx independently
+
+        Parameters
+        ----------
+        k : float
+            Independent variable for scipy.optimize.minimize. What we are solving for
+        dTdQ : float
+            Experimental value to fit model to and solve for kx
+        Q : array-like
+            Range of input power values
+
+        g : float
+            Value for g at which we are solving for kx
+        w0_dTdQg : float 
+            Value for w0 for this experiment 
+        l0_dTdQg : float 
+            Value for l0 for this experiment  
+        verbose : bool
+            print progress, default False
+        """
+        if self.l0_dTdQg is not None: 
+            l0_dTdQg = self.l0_dTdQg
+        if self.w0_dTdQg is not None: 
+            w0_dTdQg = self.w0_dTdQg
+
+        self.update_w0(w0_dTdQg)
+        self.update_l0(l0_dTdQg)
+
+        experimental_value = dTdQ
+        guess = self.dTdQ(kx=k, ky=k, g=g, Q=Q)
+
+        if verbose:
+            print("solving kx:", np.sqrt((guess - experimental_value) ** 2))
+        return np.sqrt((guess - experimental_value) ** 2)
+    
+    def solve_anisotropic_raman(self, p, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
+                                dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
+                                dTdQ_g, Qg, w0_dTdQg, l0_dTdQg): 
+        kx, ky, g = p 
+
+        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx)
+        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy)
+        eq3 = self.solve_g(g, dTdQ_g, Qg, kx, ky, w0_dTdQg, l0_dTdQg)
+        eqtns = np.concatenate([eq1, eq2, eq3])#is this generalizable?
+        print(np.sum(eqtns), kx, ky, g/1E6)
+        return eqtns
+    
+    def get_kx_ky_g(self, x0, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
+                    dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
+                    dTdQ_g, Qg, w0_dTdQg, l0_dTdQg, **ls_kwargs):
+        
+        root = least_squares(self.solve_anisotropic_raman, x0=x0, 
+                      args=(dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
+                    dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
+                    dTdQ_g, Qg, w0_dTdQg, l0_dTdQg), **ls_kwargs)
+        return root 
+
+    def solve_anisotropic_raman_varyall(self, p, dTdQ_x, Qx,dTdQ_y, Qy, dTdQ_g, Qg): 
+
+        kx, ky, g, h, alpha, w0_dTdQx, l0_dTdQx, w0_dTdQg = p #w0_dTdQy, l0_dTdQy,
+        w0_dTdQy = l0_dTdQx # enforcing anisotropic beam to be the same for both measurements 
+        l0_dTdQy = w0_dTdQx
+        l0_dTdQg = w0_dTdQg # enforcing isotropic beam to be perfectly isotropic
+        
+        self.h = h 
+        self.alpha = alpha
+
+        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx)
+        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy)
+        eq3 = self.solve_g(g, dTdQ_g, Qg, kx, ky, w0_dTdQg, l0_dTdQg)
+        eqtns = np.concatenate([eq1, eq2, eq3])#is this generalizable?
+        print(np.sum(eqtns), kx, ky, g/1E6)
+        return eqtns
+
+    def get_kx_ky_g_varyall(self, x0, dTdQ_x, Qx, dTdQ_y, Qy, dTdQ_g, Qg, **ls_kwargs):
+        
+        root = least_squares(self.solve_anisotropic_raman_varyall, x0=x0, 
+                      args=(dTdQ_x, Qx, dTdQ_y, Qy, dTdQ_g, Qg, ), **ls_kwargs)
+        return root  
+    
+    def solve_anisotropic_raman_kxky_varyall(self, p, dTdQ_x, Qx,dTdQ_y, Qy,g): 
+        # hold g fixed
+
+        kx, ky, h, alpha, w0_dTdQx, l0_dTdQx = p #w0_dTdQy, l0_dTdQy,
+        w0_dTdQy = l0_dTdQx # enforcing anisotropic beam to be the same for both measurements 
+        l0_dTdQy = w0_dTdQx
+        
+        self.h = h 
+        self.alpha = alpha
+
+        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx)
+        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy)
+        eqtns = np.concatenate([eq1, eq2])#is this generalizable?
+        print(np.sum(eqtns), kx, ky)
+        return eqtns
+
+    def get_kx_ky_varyall(self, x0, dTdQ_x, Qx, dTdQ_y, Qy, g, **ls_kwargs):
+        
+        root = least_squares(self.solve_anisotropic_raman_kxky_varyall, x0=x0, 
+                      args=(dTdQ_x, Qx, dTdQ_y, Qy, g), **ls_kwargs)
+        return root  
+    
+    
+    def solve_isotropic_raman(self, p, dTdQ_array, Q, r_array):
+        k, g = p 
+        eqns = []
+        for r, dTdQ in zip(r_array, dTdQ_array): 
+            # eqns.append(self.solve_k(k, dTdQ, Q, k, g, r, r))
+            eqns.append(self.solve_g(g, dTdQ, Q, k, g, r, r))
+        return tuple(eqns) 
+    
+    def get_k_g(self, x0, dTdQ_array, Q, r_array, **ls_kwargs): 
+        root = least_squares(self.solve_isotropic_raman, x0=x0, args=(dTdQ_array, Q, r_array), **ls_kwargs)
+        return root 
+
 
 
     def iter_solve(
@@ -333,7 +525,7 @@ class RamanSolver:
         ky_bounds=((0.0, 500.0),),
         g_bounds=((0.5e6, 30e6),),
         Qy=None,
-        Qiso=None,
+        Qg=None,
         wy=None,
         ly=None,
         wx=None,
@@ -373,7 +565,7 @@ class RamanSolver:
             bounds for g, default ((0.5E6, 10E6),)
         Qy : array-like
             Optional if need to update Q when solving for ky, default None
-        Qiso : array-like
+        Qg : array-like
             Optional if need to update Q when solving for g, default None
         """
         warnings.warn("iter_solve is deprecated, use new_function instead", DeprecationWarning, stacklevel=2)
@@ -391,8 +583,8 @@ class RamanSolver:
 
         if Qy is None:
             Qy = Qx
-        if Qiso is None:
-            Qiso = Qx
+        if Qg is None:
+            Qg = Qx
 
         if wy is None and wx is None:
             widths = [self.w0, self.l0]
@@ -464,13 +656,13 @@ class RamanSolver:
             sol = minimize(
                 self.solve_g,
                 gg,
-                args=(dTdQ_g, Qiso, kxg, kyg, self.w0_dTdQiso, self.l0_dTdQiso, verbose),
+                args=(dTdQ_g, Qg, kxg, kyg, self.w0_dTdQg, self.l0_dTdQg, verbose),
                 tol=tolerance,
                 method="Nelder-Mead",
                 bounds=g_bounds,
             )
             g_solved = sol.x[0]
-            dTdQ_g_solved = self.dTdQ(kxg, kyg, g_solved, Qiso)
+            dTdQ_g_solved = self.dTdQ(kxg, kyg, g_solved, Qg)
             dTdQ_g_err = np.sqrt((dTdQ_g - dTdQ_g_solved) ** 2)
             dTdQ_g_perc = np.abs(dTdQ_g - dTdQ_g_solved) / dTdQ_g
 
