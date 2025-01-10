@@ -125,7 +125,7 @@ def fit_E_A(
     y = spec[start:stop]
 
     out = custom_function(
-        x, y, 2, peakfunction, backgroundfunction, centers=[390, 410], peaktol=5
+        x, y, 2, peakfunction, backgroundfunction, centers=[390, 410], peaktol=15
     )
 
     # just selecting the parameters of interest
