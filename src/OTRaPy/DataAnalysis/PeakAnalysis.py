@@ -329,6 +329,7 @@ def fit_sweepmap(fn, xaxis, do_dwdp=True, remove_spikes=False, wls=None, plot=Tr
             if do_dwdp:
                 skip_index.append(i)
             else:
+                skip_index.append(i)
                 Aarr.append(A)
                 Aarr_err.append(Aerr)
 

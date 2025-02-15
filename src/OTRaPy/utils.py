@@ -220,3 +220,41 @@ def dict_to_plot(my_dict):
     dT = (np.array(A) - A[0]) * 1/dwdt
     dT_err = np.array(Aerr) * -1/dwdt
     return np.array(pwr), dT, dT_err, np.array(A), np.array(Aerr), dwdt
+
+def r_from_zl(r0, zl, NA): 
+    return np.sqrt(r0**2 + (zl*NA)**2)
+
+def converter(angle): 
+    if angle >= 200 and angle < 290: 
+        angle = 270  
+    elif angle >= 290 and angle <= 360 : 
+        angle = angle % 290 
+    elif angle >= 0 and angle < 200: 
+        angle += 70
+    elif angle < 0: 
+        angle += 360 
+        angle = converter(angle)
+    return angle 
+
+def curve_fit_power(angle, m, b, Tmax):
+    OD = (m/270)* angle + b
+    attenuation = 10 ** (OD)
+    power = Tmax * attenuation
+    return power
+
+
+s5_36_alpha = {'lasery':0.08349178791,
+               'laserx':0.06625795214,
+               'laseriso':0.08167124976} #copying other wrinkled sample 
+
+s2_36_fl_alpha = {'lasery':0.08185679473,
+               'laserx':0.07419423715, #0.04289653876
+               'laseriso':0.08078288046}
+
+s2_36_r3_alpha = {'lasery':0.08349178791,
+               'laserx':0.06625795214,
+               'laseriso':0.08167124976}
+
+s2_c_alpha = {'lasery':0.08080190648,
+               'alpha_y':0.07419423715,
+               'laseriso':0.08063320946}

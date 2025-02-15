@@ -13,6 +13,86 @@ class RamanSolver:
     """
     Solver for 2D Diffusion in Raman Thermometry Measurements
     Default materials parameters come from Taube, et. al, MoS2 on SiO2/Si
+    
+    Attributes 
+    ----------
+    lx : float 
+        x-dimension of grid in meters 
+    ly : float 
+        y-dimension of grid in meters 
+    nx : int 
+        number of points along x 
+    ny : int 
+        number of points along y
+    h : float 
+        thickness of sample 
+    alpha : float 
+        absorption coefficient of sample 
+    w0 : float 
+        gaussian beam width along x, able to take arrays for z-sweep measurements 
+    l0 : float 
+        gaussian beam width along y, able to take arrays for z-sweep measurements 
+    w0_dTdQg : float, default None 
+        for anisotropic measurement, isotropic gaussian beam width along x
+    l0_dTdQg : float, default None
+        for anisotropic measurement, isotropic gaussian beam width along y
+    w0_dTdQx : float, default None 
+        for anisotropic measurement, for solving kx, anisotropic gaussian beam width along x (w0 when laser parallel to y, "lasery")
+    l0_dTdQx : float, default None 
+        for anisotropic measurement, for solving kx, anisotropic gaussian beam width along y (l0 when laser parallel to y, "lasery")
+    w0_dTdQy : float, default None
+        for anisotropic measurement, for solving ky, anisotropic gaussian beam width along x (w0 when laser parallel to x, "laserx")
+    l0_dTdQy : float, default None 
+        for anisotropic measurement, for solving ky, anisotropic gaussian beam width along y (l0 when laser parallel to x, "laserx")
+
+
+    Methods 
+    -------
+    dTdQ
+    dTdQ_sim
+    generate_qdot
+    get_g_fixk
+    get_k_g
+    get_k_g_varyall
+    get_kx_ky_fixg
+    get_kx_ky_g
+    get_kx_ky_g_curve
+    get_kx_ky_g_varyall
+    get_kx_ky_varyall
+    iter_solve
+    mc_sim_resid_full
+    mc_sim_resid_full_varyall
+    minimize_resid_fixg
+    minimize_resid_fixk
+    minimize_resid_full
+    minimize_resid_full_isotropic
+    minimize_resid_full_isotropic_varyall
+    minimize_resid_full_varyall
+    resid_dTdQ
+    resid_fixg
+    resid_fixk
+    resid_full
+    resid_full_isotropic
+    resid_full_isotropic_varyall
+    resid_full_varyall
+    solve_anisotropic_raman
+    solve_anisotropic_raman_curve
+    solve_anisotropic_raman_fixg
+    solve_anisotropic_raman_kxky_varyall
+    solve_anisotropic_raman_varyall',
+    solve_g
+    solve_isotropic_raman
+    solve_isotropic_raman_fixk
+    solve_isotropic_raman_varyall
+    solve_k
+    solve_kx
+    solve_ky
+    update_alpha
+    update_l0
+    update_w0
+    weighted_average
+
+
     """
 
     def __init__(
@@ -22,7 +102,7 @@ class RamanSolver:
         nx: int = 50,
         ny: int = 50,
         h: float = 0.7e-9,
-        alpha: float = 0.07,
+        alpha : float = 0.04, 
         w0: float = 0.4e-6,
         l0: float = 0.4e-6,
         w0_dTdQg = None,
@@ -32,21 +112,20 @@ class RamanSolver:
         w0_dTdQy = None, 
         l0_dTdQy = None
     ) -> None:
+        
         # define the grid
-
         self.lx = lx
         self.ly = ly
         self.nx = nx
         self.ny = ny
+
         # things that won't be changing throughout fitting
         # but will ultimately probably need error propagation?
-
         self.h = h  # thickness (m)
-
         self.update_l0(l0) # gaussian beam width in y-direction (m)
         self.update_w0(w0) # gaussian beam width in x-direction (m)
+        self.alpha = alpha  # material % absorption at laser wavelength (%) with laser orientation 
 
-        self.alpha = alpha  # material % absorption at laser wavelength (%)
         
         self.w0_dTdQg, self.l0_dTdQg = w0_dTdQg, l0_dTdQg  # gaussian beam width for isotropic measurement
         self.w0_dTdQx, self.l0_dTdQx, self.w0_dTdQy, self.l0_dTdQy = w0_dTdQx, l0_dTdQx, w0_dTdQy, l0_dTdQy # gaussian beam width for anisotropic measurements
@@ -64,6 +143,14 @@ class RamanSolver:
         self.Y = np.broadcast_to(self.Y, (len(self.l0), self.ny, self.ny))
     
     def update_w0(self, new_w0): 
+        """
+        Update w0 to new parameter, matching shapes for proper implementation 
+
+        Parameters 
+        ----------
+        new_w0 : float or np.ndarray 
+            new value for w0  
+        """
         if type(new_w0) == float or type(new_w0) == np.float64: 
             self.w0 = np.array([new_w0])
         else: 
@@ -71,12 +158,30 @@ class RamanSolver:
         self.w0 = np.broadcast_to(self.w0, (self.nx, self.ny, len(self.w0))).T
 
     def update_l0(self, new_l0):
+        """
+        Update l0 to new parameter, matching shapes for proper implementation 
+
+        Parameters 
+        ----------
+        new_l0 : float or np.ndarray 
+            new value for l0
+        """
         if type(new_l0) == float or type(new_l0) == np.float64: 
             self.l0 = np.array([new_l0])
         else: 
             self.l0 = new_l0
         self.l0 = np.broadcast_to(self.l0, (self.nx, self.ny, len(self.l0))).T
 
+    def update_alpha(self, new_alpha : float): 
+        """
+        Update alpha to new parameter
+
+        Parameters 
+        ----------
+        new_alpha : float 
+            new value for alpha 
+        """
+        self.alpha = new_alpha 
 
     def generate_qdot(self, Q: float = 1e-3):
         """
@@ -89,6 +194,7 @@ class RamanSolver:
             Input laser power, default 1e-3 (W)
 
         """
+        
         coef = (Q * self.alpha) / (np.pi * self.w0 * self.l0)  # W/m2
         qdot = coef * np.exp(-(self.X**2 / self.w0**2 + self.Y**2 / self.l0**2))
         self.qdot = qdot
@@ -102,8 +208,7 @@ class RamanSolver:
         Q: float = 1e-3,
         threshold: float = 1.0e-5,
         Ta: float = 300.0,
-        d2h=None,
-        verbose: bool = False,
+        d2h=None
     ):
         """
         Solve the steady-state 2D temperature distribution in a material with laser heating.
@@ -122,12 +227,8 @@ class RamanSolver:
             Threshold for error in calculation, default 1E-5
         Ta : float
             Temperature of substrate (K), default 300
-        verbose : bool
-            Whether or not to print error, default False
-
         """
         error = 1
-
         self.generate_qdot(Q)
 
         T = np.ones(self.X.shape) * Ta
@@ -177,7 +278,7 @@ class RamanSolver:
         Tav = np.array(Tav)
         return Tav
 
-    def dTdQ(self, kx: float, ky: float, g: float, Q, quick: bool = True, **kwargs):
+    def dTdQ(self, kx: float, ky: float, g: float, Q, **kwargs):
         """
         Calculate dTdQ for a given Q range and thermal properties (kx, ky, kg)
 
@@ -191,9 +292,6 @@ class RamanSolver:
             Interfacial thermal conductance
         Q : array-like
             Range of input power values
-        quick : bool
-            Whether or not to calculate the slope as just y2-y1 / x2-x1 (first and last points) or fit a line to the data, default True
-
         """
         T1 = self.Txy(kx=kx, ky=ky, g=g, Q=Q[0], **kwargs)
         Tav1 = self.weighted_average(T1)
@@ -204,65 +302,347 @@ class RamanSolver:
         
         return slope
         
-    def dTdQ_sim(self, kx, ky, g, Q,w0,l0,Ta):
-        self.update_l0(l0)
-        self.update_w0(w0)
+    def dTdQ_sim(self, kx : float, ky : float, g : float, Q, w0=None, l0=None, alpha=None, Ta=300):
+        """
+        Generate dTdQ for materials parameters and simulate experimental T vs. Q 
+
+        Parameters
+        ----------
+        kx : float
+            Thermal conductivity in x-direction
+        ky : float
+            Thermal conductivity in y-direction
+        g : float
+            Interfacial thermal conductance
+        Q : array-like
+            Range of input power values
+        w0 : float, optional 
+            w0 for simulation, default None passes to current w0  
+        l0 : float, optional 
+            l0 for simulation, default None passes to current l0 
+        alpha : float, optional 
+            alpha for simulation, default None passes to current alpha 
+        Ta : float or int, optional 
+            stage temperature for simulation, default None passes to 300K  
+
+        """
+        if w0 is not None: 
+            self.update_l0(l0)
+        if l0 is not None: 
+            self.update_w0(w0)
+        if alpha is not None: 
+            self.update_alpha(alpha)
+        
         dTdQ = self.dTdQ(kx,ky,g,Q)
         sim = linear(Q, dTdQ, Ta)
+
         return sim
     
-    def resid_dTdQ(self, kx, ky, g, Q, dTdQ_arr, w0,l0,Ta): 
-        sim = self.dTdQ_sim(kx, ky, g, Q, w0,l0,Ta)
-        # plt.plot(Q, dTdQ_arr)
-        # plt.plot(Q, sim)
-        return (dTdQ_arr - sim)**2
+    def resid_dTdQ(self, kx, ky, g, Q, dT_arr, dT_err, w0=None,l0=None,alpha=None,Ta=300, off=0): 
+        """
+        Calculate residual between simulated dTdQ and experimental dTdQ curves
 
-    def resid_full(self, p, dTdQ_x_arr, Qx, w0_dTdQx, l0_dTdQx, 
-                                dTdQ_y_arr, Qy, w0_dTdQy, l0_dTdQy,
-                                dTdQ_g_arr, Qg, w0_dTdQg, l0_dTdQg,Ta): 
+        Parameters
+        ----------
+        kx : float
+            Thermal conductivity in x-direction
+        ky : float
+            Thermal conductivity in y-direction
+        g : float
+            Interfacial thermal conductance
+        Q : array-like
+            Range of input power values
+        dTdQ_arr : array-like 
+            Experimental dT values 
+        dT_err : array_like 
+            TODO: Errors on experimental dT values ; can be used to weight residuals but currently not
+        w0 : float, optional 
+            w0 for simulation, default None passes to current w0  
+        l0 : float, optional 
+            l0 for simulation, default None passes to current l0 
+        alpha : float, optional 
+            alpha for simulation, default None passes to current alpha 
+        Ta : float or int, optional 
+            stage temperature for simulation, default None passes to 300K  
+
+        """
+        sim = self.dTdQ_sim(kx, ky, g, Q, w0, l0, alpha, Ta)
+        sim += off 
+
+        return (dT_arr - sim)**2 #/dT_err 
+    #####################################################################################################
+    # Functions to perform least squares curve fitting between simulation and experimental points
+    def resid_full(self, p, dTdQ_x_arr, dTdQ_x_err, Qx, w0_dTdQx, l0_dTdQx, alpha_x,
+                                dTdQ_y_arr, dTdQ_y_err, Qy, w0_dTdQy, l0_dTdQy, alpha_y,
+                                dTdQ_g_arr, dTdQ_g_err, Qg, w0_dTdQg, l0_dTdQg, alpha_g,
+                                Ta): 
+        """
+        Helper function for minimizing the residual between dTdQ simulations and 3 dT curves (isotropic, laserx, lasery)
+        
+        Parameters
+        ----------
+        p : array-like 
+            kx,ky,g; parameters to minimize to
+        dTdQ_x_arr : array-like 
+            experimental dT for solving for kx (lasery)
+        dTdQ_x_err: array-like 
+            error on dTdQ_x_arr
+        Qx : array-like
+            powers corresponding to dTdQ_x_arr 
+        w0_dTdQx : float 
+            w0 for dTdQ_x_arr
+        l0_dTdQx : float 
+            l0 for dTdQ_x_arr 
+        alpha_x : float 
+            alpha for dTdQ_x_arr (for this orientation of laser)
+        dTdQ_y_arr : array-like 
+            experimental dT for solving for ky (laserx)
+        dTdQ_y_err: array-like 
+            error on dTdQ_y_arr
+        Qy : array-like
+            powers corresponding to dTdQ_y_arr 
+        w0_dTdQy : float 
+            w0 for dTdQ_y_arr
+        l0_dTdQy : float 
+            l0 for dTdQ_y_arr 
+        alpha_y : float 
+            alpha for dTdQ_y_arr (for this orientation of laser)
+        dTdQ_g_arr : array-like 
+            experimental dT for solving for kg (isolaser)
+        dTdQ_g_err: array-like 
+            error on dTdQ_g_arr
+        Qg : array-like
+            powers corresponding to dTdQ_g_arr 
+        w0_dTdQg : float 
+            w0 for dTdQ_g_arr
+        l0_dTdQg : float 
+            l0 for dTdQ_g_arr 
+        alpha_g : float 
+            alpha for dTdQ_g_arr (for this orientation of laser)
+        Ta : int or float 
+            substrate temperature 
+        """
+        
         kx, ky, g = p
-        eq1 = self.resid_dTdQ(kx, ky, g, Qx, dTdQ_x_arr, w0_dTdQx, l0_dTdQx, Ta)
-        eq2 = self.resid_dTdQ(kx, ky, g, Qy, dTdQ_y_arr, w0_dTdQy, l0_dTdQy, Ta)
-        eq3 = self.resid_dTdQ(kx, ky, g, Qg, dTdQ_g_arr, w0_dTdQg, l0_dTdQg, Ta)
+        offx, offy, offg = 0, 0, 0
+        
+        eq1 = self.resid_dTdQ(kx, ky, g, Qx, dTdQ_x_arr, dTdQ_x_err, w0_dTdQx, l0_dTdQx, alpha_x, Ta, offx)
+        eq2 = self.resid_dTdQ(kx, ky, g, Qy, dTdQ_y_arr, dTdQ_y_err, w0_dTdQy, l0_dTdQy, alpha_y, Ta, offy)
+        eq3 = self.resid_dTdQ(kx, ky, g, Qg, dTdQ_g_arr, dTdQ_g_err, w0_dTdQg, l0_dTdQg, alpha_g, Ta, offg)
+        
         eqtns = np.concatenate([eq1, eq2, eq3])
+        
         print(np.sum(eqtns), kx, ky, g)
         return eqtns
 
-    def minimize_resid_full(self, x0, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
-                                dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
-                                dTdQ_g, Qg, w0_dTdQg, l0_dTdQg,
-                                Ta, **ls_kwargs):
+    def minimize_resid_full(self, x0, dTdQ_x_arr, dTdQ_x_err, Qx, w0_dTdQx, l0_dTdQx, alpha_x,
+                                dTdQ_y_arr, dTdQ_y_err, Qy, w0_dTdQy, l0_dTdQy, alpha_y,
+                                dTdQ_g_arr, dTdQ_g_err, Qg, w0_dTdQg, l0_dTdQg, alpha_g,
+                                  Ta,**ls_kwargs):
+        """
+        Least squares minimization between simulation and experimental curves for isotropic + anisotropic measurement
         
-        root = least_squares(self.resid_full, x0=x0, args=(dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
-                                dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
-                                dTdQ_g, Qg, w0_dTdQg, l0_dTdQg,Ta),**ls_kwargs)
+        Parameters
+        ----------
+        x0 : array-like 
+            kx,ky,g initial guesses 
+        dTdQ_x_arr : array-like 
+            experimental dT for solving for kx (lasery)
+        dTdQ_x_err: array-like 
+            error on dTdQ_x_arr
+        Qx : array-like
+            powers corresponding to dTdQ_x_arr 
+        w0_dTdQx : float 
+            w0 for dTdQ_x_arr
+        l0_dTdQx : float 
+            l0 for dTdQ_x_arr 
+        alpha_x : float 
+            alpha for dTdQ_x_arr (for this orientation of laser)
+        dTdQ_y_arr : array-like 
+            experimental dT for solving for ky (laserx)
+        dTdQ_y_err: array-like 
+            error on dTdQ_y_arr
+        Qy : array-like
+            powers corresponding to dTdQ_y_arr 
+        w0_dTdQy : float 
+            w0 for dTdQ_y_arr
+        l0_dTdQy : float 
+            l0 for dTdQ_y_arr 
+        alpha_y : float 
+            alpha for dTdQ_y_arr (for this orientation of laser)
+        dTdQ_g_arr : array-like 
+            experimental dT for solving for kg (isolaser)
+        dTdQ_g_err: array-like 
+            error on dTdQ_g_arr
+        Qg : array-like
+            powers corresponding to dTdQ_g_arr 
+        w0_dTdQg : float 
+            w0 for dTdQ_g_arr
+        l0_dTdQg : float 
+            l0 for dTdQ_g_arr 
+        alpha_g : float 
+            alpha for dTdQ_g_arr (for this orientation of laser)
+        Ta : int or float 
+            substrate temperature 
+        ls_kwargs : dict 
+            keyword arguments for scipy.optimize.least_squares
+
+        """
+        
+        root = least_squares(self.resid_full, x0=x0, args=(dTdQ_x_arr, dTdQ_x_err, Qx, w0_dTdQx, l0_dTdQx, alpha_x,
+                                dTdQ_y_arr, dTdQ_y_err, Qy, w0_dTdQy, l0_dTdQy, alpha_y,
+                                dTdQ_g_arr, dTdQ_g_err, Qg, w0_dTdQg, l0_dTdQg, alpha_g, Ta),**ls_kwargs)
+        return root
+
+    def resid_fixg(self, p, dTdQ_x_arr, dTdQ_x_err, Qx, w0_dTdQx, l0_dTdQx, alpha_x,
+                                dTdQ_y_arr,dTdQ_y_err,  Qy, w0_dTdQy, l0_dTdQy, alpha_y,
+                                g,Ta): 
+        """
+        Helper function for minimizing the residual between dTdQ simulations and 2 dT curves (laserx, lasery),
+        fixing g 
+
+        Parameters 
+        ----------
+        See resid_full; just removes all g parameters 
+
+        g : float
+            Fixed value for g 
+        """
+        kx, ky = p
+        eq1 = self.resid_dTdQ(kx, ky, g, Qx, dTdQ_x_arr, dTdQ_x_err, w0_dTdQx, l0_dTdQx, alpha_x, Ta)
+        eq2 = self.resid_dTdQ(kx, ky, g, Qy, dTdQ_y_arr, dTdQ_y_err, w0_dTdQy, l0_dTdQy, alpha_y, Ta)
+        eqtns = np.concatenate([eq1, eq2])
+        print(np.sum(eqtns), kx, ky)
+        return eqtns
+
+    def minimize_resid_fixg(self, x0, dTdQ_x_arr, dTdQ_x_err, Qx, w0_dTdQx, l0_dTdQx, alpha_x,
+                                dTdQ_y_arr, dTdQ_y_err, Qy, w0_dTdQy, l0_dTdQy, alpha_y, g,Ta,
+                                 **ls_kwargs):
+        """
+        Least squares minimization between simulation and experimental curves for anisotropic measurement
+
+        Patameters 
+        ---------
+        See minimize_resid_full; just removes all g parameters
+
+        g : float
+            Fixed value for g 
+        """
+        root = least_squares(self.resid_fixg, x0=x0, args=(dTdQ_x_arr, dTdQ_x_err, Qx, w0_dTdQx, l0_dTdQx, alpha_x,
+                                dTdQ_y_arr, dTdQ_y_err, Qy, w0_dTdQy, l0_dTdQy, alpha_y, 
+                                g,Ta),**ls_kwargs)
+        return root    
+    
+    def resid_fixk(self, p, dTdQ_g_arr, dTdQ_g_err, Qg, w0_dTdQg, l0_dTdQg,alpha_g, 
+                                kx,ky,Ta): 
+        """
+        Helper function for minimizing the residual between dTdQ simulations and 1 dT curve (isolaser)
+
+        Parameters 
+        ----------
+        See resid_full; keeps only g parameters 
+        kx : float 
+            Fixed value for kx 
+        ky : float 
+            Fixed value for ky 
+        """
+        g = p
+        eq1 = self.resid_dTdQ(kx, ky, g, Qg, dTdQ_g_arr, dTdQ_g_err, w0_dTdQg, l0_dTdQg, alpha_g, Ta)
+        # print(np.sum(eq1), g)
+        return eq1
+
+    def minimize_resid_fixk(self, x0, dTdQ_g_arr, dTdQ_g_err,Qg, w0_dTdQg, l0_dTdQg,alpha_g, 
+                                kx,ky,Ta, **ls_kwargs):
+        """
+        Least squares minimization between simulation and experimental curves for anisotropic measurement
+        
+        Parameters 
+        ----------
+        See minimize_resid_full; keeps only g parameters 
+        kx : float 
+            Fixed value for kx 
+        ky : float 
+            Fixed value for ky
+        """
+        root = least_squares(self.resid_fixk, x0=x0, args=(dTdQ_g_arr, dTdQ_g_err,Qg, w0_dTdQg, l0_dTdQg,alpha_g, 
+                                kx,ky,Ta),**ls_kwargs)
         return root
     
-    def resid_full_varyall(self, p, dTdQ_x_arr, Qx,dTdQ_y_arr, Qy, dTdQ_g_arr, Qg, Ta): 
-        kx, ky, g, h, alpha, w0_dTdQx, l0_dTdQx, w0_dTdQg = p #w0_dTdQy, l0_dTdQy,
+    def resid_full_varyall(self, p, dTdQ_x_arr, dTdQ_x_err, Qx,dTdQ_y_arr, dTdQ_y_err, Qy, dTdQ_g_arr, dTdQ_g_err,Qg): 
+        """
+        Helper function for minimizing the residual between dTdQ simulations and 3 dT curves (isolaser, laserx, lasery)
+        Allows all parameters to vary 
+
+        Parameters 
+        ----------
+        p : array-like 
+            Parameters to minimize to
+            kx, ky, g, h, alpha_x, alpha_y, alpha_g, w0_dTdQx, l0_dTdQx,w0_dTdQy, l0_dTdQy, w0_dTdQg, l0_dTdQg 
+        dTdQ_x_arr : array-like 
+            experimental dT for solving for kx (lasery)
+        dTdQ_x_err: array-like 
+            error on dTdQ_x_arr
+        dTdQ_y_arr : array-like 
+            experimental dT for solving for ky (laserx)
+        dTdQ_y_err: array-like 
+            error on dTdQ_y_arr
+        dTdQ_g_arr : array-like 
+            experimental dT for solving for g (isolaser)
+        dTdQ_g_err: array-like 
+            error on dTdQ_g_arr
+        Ta : int or float 
+            substrate temperature 
+        """
         
-        w0_dTdQy = l0_dTdQx # enforcing anisotropic beam to be the same for both measurements 
-        l0_dTdQy = w0_dTdQx
-        l0_dTdQg = w0_dTdQg # enforcing isotropic beam to be perfectly isotropic
+        kx, ky, g, h, alpha_x, alpha_y, alpha_g, w0_dTdQx, l0_dTdQx,w0_dTdQy, l0_dTdQy, w0_dTdQg, l0_dTdQg, Ta = p #w0_dTdQy, l0_dTdQy,
+        offx, offy, offg = 0,0,0
+
+        # enforcing anisotropic beam to be the same for both measurements 
+        # w0_dTdQy = l0_dTdQx 
+        # l0_dTdQy = w0_dTdQx
+        # enforcing isotropic beam to be perfectly isotropic
+        # l0_dTdQg = w0_dTdQg 
         
         self.h = h 
-        self.alpha = alpha
 
-        eq1 = self.resid_dTdQ(kx, ky, g, Qx, dTdQ_x_arr, w0_dTdQx, l0_dTdQx, Ta)
-        eq2 = self.resid_dTdQ(kx, ky, g, Qy, dTdQ_y_arr, w0_dTdQy, l0_dTdQy, Ta)
-        eq3 = self.resid_dTdQ(kx, ky, g, Qg, dTdQ_g_arr, w0_dTdQg, l0_dTdQg, Ta)
+        eq1 = self.resid_dTdQ(kx, ky, g, Qx, dTdQ_x_arr, dTdQ_x_err, w0_dTdQx, l0_dTdQx, alpha_x, Ta, offx)
+        eq2 = self.resid_dTdQ(kx, ky, g, Qy, dTdQ_y_arr, dTdQ_y_err, w0_dTdQy, l0_dTdQy, alpha_y, Ta, offy)
+        eq3 = self.resid_dTdQ(kx, ky, g, Qg, dTdQ_g_arr, dTdQ_g_err, w0_dTdQg, l0_dTdQg, alpha_g, Ta, offg)
         eqtns = np.concatenate([eq1, eq2, eq3])
-        print(np.sum(eqtns), kx, ky, g)
+        # print(np.sum(eqtns), kx, ky, g,)
         return eqtns
          
-    def minimize_resid_full_varyall(self, x0, dTdQ_x, Qx,dTdQ_y, Qy, dTdQ_g, Qg, Ta, **ls_kwargs):
-        
-        root = least_squares(self.resid_full_varyall, x0=x0, args=(dTdQ_x, Qx,dTdQ_y, Qy, dTdQ_g, Qg, Ta),**ls_kwargs)
-        
+    def minimize_resid_full_varyall(self, x0, dTdQ_x_arr, dTdQ_x_err, Qx,dTdQ_y_arr, dTdQ_y_err, Qy, dTdQ_g_arr, dTdQ_g_err,Qg,**ls_kwargs):
+        """
+        Least squares minimization between simulation and experimental curves for 3 dT curves when varying all parameters 
+
+        Parameters 
+        ----------
+        x0 : array-like 
+            Initial guess 
+            kx, ky, g, h, alpha_x, alpha_y, alpha_g, w0_dTdQx, l0_dTdQx,w0_dTdQy, l0_dTdQy, w0_dTdQg, l0_dTdQg 
+        dTdQ_x_arr : array-like 
+            experimental dT for solving for kx (lasery)
+        dTdQ_x_err: array-like 
+            error on dTdQ_x_arr
+        dTdQ_y_arr : array-like 
+            experimental dT for solving for ky (laserx)
+        dTdQ_y_err: array-like 
+            error on dTdQ_y_arr
+        dTdQ_g_arr : array-like 
+            experimental dT for solving for g (isolaser)
+        dTdQ_g_err: array-like 
+            error on dTdQ_g_arr
+        Ta : int or float 
+            substrate temperature
+        ls_kwargs : dict 
+            keyword arguments for scipy.optimize.least_squares
+        """
+        root = least_squares(self.resid_full_varyall, x0=x0, args=(dTdQ_x_arr, dTdQ_x_err, Qx,dTdQ_y_arr, dTdQ_y_err, Qy, dTdQ_g_arr, dTdQ_g_err,Qg),**ls_kwargs)
         return root
-         
 
-
+    #################################################################################################################################################################
+    # Functions for solving using just slopes 
     def solve_kx(
         self, kx, dTdQ_x: float, Qx, ky: float, g: float, w0_dTdQx : float = 0.4E-6, l0_dTdQx : float = 0.4E-6, verbose: bool = False
     ):
@@ -303,10 +683,10 @@ class RamanSolver:
         guess = self.dTdQ(kx=kx, ky=ky, g=g, Q=Qx)
         if verbose:
             print("solving kx:", np.sqrt((guess - experimental_value) ** 2))
-        return np.sqrt((guess - experimental_value) ** 2)
+        return ((guess - experimental_value) ** 2) #got rid of sqrt
 
     def solve_ky(
-        self, ky, dTdQ_y: float, Qy, kx: float, g: float, w0_dTdQy : float = 0.4E-6, l0_dTdQy : float = 0.4E-6, verbose: bool = False
+        self, ky, dTdQ_y: float, Qy, kx: float, g: float, w0_dTdQy : float = 0.4E-6, l0_dTdQy : float = 0.4E-6, alpha=None, verbose: bool = False
     ):
         """
         Helper function for scipy.optimize.minimize to solve for ky independently
@@ -325,7 +705,7 @@ class RamanSolver:
             Value for g at which we are solving for ky
         w0_dTdQy : float 
             Value for w0 for this experiment 
-        l0_dTdQy : float 
+        l0_dTdQy : float  
             Value for l0 for this experiment 
         verbose : bool
             print progress, default False
@@ -339,15 +719,16 @@ class RamanSolver:
 
         self.update_w0(w0_dTdQy)
         self.update_l0(l0_dTdQy)
+        self.update_alpha(alpha)
 
         experimental_value = dTdQ_y
         guess = self.dTdQ(kx=kx, ky=ky, g=g, Q=Qy)
         if verbose:
             print("solving ky:", np.sqrt((guess - experimental_value) ** 2))
-        return np.sqrt((guess - experimental_value) ** 2)
+        return ((guess - experimental_value) ** 2)
 
     def solve_g(
-        self, g, dTdQ_g: float, Qg, kx: float, ky: float, w0_dTdQg : float  = 0.4E-6, l0_dTdQg : float  = 0.4E-6, verbose: bool = False
+        self, g, dTdQ_g: float, Qg, kx: float, ky: float, w0_dTdQg : float  = 0.4E-6, l0_dTdQg : float  = 0.4E-6, alpha=None, verbose: bool = False
     ):
         """
         Helper function for scipy.optimize.minimize to solve for g independently
@@ -379,16 +760,17 @@ class RamanSolver:
 
         self.update_w0(w0_dTdQg)
         self.update_l0(l0_dTdQg)
+        self.update_alpha(alpha)
 
         experimental_value = dTdQ_g
         guess = self.dTdQ(kx=kx, ky=ky, g=g, Q=Qg)
 
         if verbose:
             print("solving g:", np.sqrt((guess - experimental_value) ** 2))
-        return np.sqrt((guess - experimental_value) ** 2)
+        return ((guess - experimental_value) ** 2)
     
     def solve_k(
-        self, k, dTdQ: float, Q, g: float, w0_dTdQg : float = 0.4E-6, l0_dTdQg : float = 0.4E-6, verbose: bool = False
+        self, k, dTdQ: float, Q, g: float, w0_dTdQg : float = 0.4E-6, l0_dTdQg : float = 0.4E-6, alpha=None, verbose: bool = False
     ):
         """
         Helper function for scipy.optimize.minimize to solve for kx independently
@@ -418,6 +800,7 @@ class RamanSolver:
 
         self.update_w0(w0_dTdQg)
         self.update_l0(l0_dTdQg)
+        self.update_alpha(alpha)
 
         experimental_value = dTdQ
         guess = self.dTdQ(kx=k, ky=k, g=g, Q=Q)
@@ -426,87 +809,485 @@ class RamanSolver:
             print("solving kx:", np.sqrt((guess - experimental_value) ** 2))
         return np.sqrt((guess - experimental_value) ** 2)
     
-    def solve_anisotropic_raman(self, p, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
-                                dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
-                                dTdQ_g, Qg, w0_dTdQg, l0_dTdQg): 
+    def solve_anisotropic_raman(self, p, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, alpha_x,
+                                dTdQ_y, Qy, w0_dTdQy, l0_dTdQy, alpha_y,
+                                dTdQ_g, Qg, w0_dTdQg, l0_dTdQg, alpha_g): 
+        """
+        Helper function for solving kx,ky,g using experimental slopes from isotropic, laserx, lasery experiments
+        Different from functions for minimizing to residuals as now we are just using the slopes, not all the points 
+
+        Parameters
+        ----------
+        p : array-like 
+            kx,ky,g ; parameters to minimize to 
+        dTdQ_x : float 
+            dTdQ slope for measurement used to solve for kx (lasery)
+        Qx : array-like
+            powers used for dTdQ_x 
+        w0_dTdQx : float 
+            w0 for dTdQ_x
+        l0_dTdQx : float 
+            l0 for dTdQ_x 
+        alpha_x : float 
+            alpha for dTdQ_x (for this orientation of laser)
+        dTdQ_y : float 
+            dTdQ slope for measurement used to solve for ky (laserx)
+        Qy : array-like
+            powers used for dTdQ_y 
+        w0_dTdQy : float 
+            w0 for dTdQ_y
+        l0_dTdQy : float 
+            l0 for dTdQ_y
+        alpha_y : float 
+            alpha for dTdQ_y (for this orientation of laser)
+        dTdQ_g : float 
+            dTdQ slope for measurement used to solve for ky (laserx)
+        Qg : array-like
+            powers used for dTdQ_g 
+        w0_dTdQg : float 
+            w0 for dTdQ_g
+        l0_dTdQg : float 
+            l0 for dTdQ_g
+        alpha_g : float 
+            alpha for dTdQ_g (for this orientation of laser)
+        
+        """
         kx, ky, g = p 
 
-        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx)
-        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy)
-        eq3 = self.solve_g(g, dTdQ_g, Qg, kx, ky, w0_dTdQg, l0_dTdQg)
+        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx, alpha_x)
+        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy, alpha_y)
+        eq3 = self.solve_g(g, dTdQ_g, Qg, kx, ky, w0_dTdQg, l0_dTdQg, alpha_g)
         eqtns = np.concatenate([eq1, eq2, eq3])#is this generalizable?
-        print(np.sum(eqtns), kx, ky, g/1E6)
+        # print(np.sum(eqtns), kx, ky, g/1E6)
         return eqtns
     
-    def get_kx_ky_g(self, x0, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
-                    dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
-                    dTdQ_g, Qg, w0_dTdQg, l0_dTdQg, **ls_kwargs):
+    def get_kx_ky_g(self, x0, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, alpha_x, 
+                    dTdQ_y, Qy, w0_dTdQy, l0_dTdQy, alpha_y,
+                    dTdQ_g, Qg, w0_dTdQg, l0_dTdQg, alpha_g, **ls_kwargs):
+        """
+        Least squares minimization on slopes from isotropic, laserx, lasery experiments 
+        Parameters
+        ----------
+        x0 : array-like 
+            Parameters initial guess 
+        dTdQ_x : float 
+            dTdQ slope for measurement used to solve for kx (lasery)
+        Qx : array-like
+            powers used for dTdQ_x 
+        w0_dTdQx : float 
+            w0 for dTdQ_x
+        l0_dTdQx : float 
+            l0 for dTdQ_x 
+        alpha_x : float 
+            alpha for dTdQ_x (for this orientation of laser)
+        dTdQ_y : float 
+            dTdQ slope for measurement used to solve for ky (laserx)
+        Qy : array-like
+            powers used for dTdQ_y 
+        w0_dTdQy : float 
+            w0 for dTdQ_y
+        l0_dTdQy : float 
+            l0 for dTdQ_y
+        alpha_y : float 
+            alpha for dTdQ_y (for this orientation of laser)
+        dTdQ_g : float 
+            dTdQ slope for measurement used to solve for ky (laserx)
+        Qg : array-like
+            powers used for dTdQ_g 
+        w0_dTdQg : float 
+            w0 for dTdQ_g
+        l0_dTdQg : float 
+            l0 for dTdQ_g
+        alpha_g : float 
+            alpha for dTdQ_g (for this orientation of laser)
+        ls_kwargs : dict 
+            keyword arguments for scipy.optimize.least_squares
+        """
         
         root = least_squares(self.solve_anisotropic_raman, x0=x0, 
-                      args=(dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
-                    dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
-                    dTdQ_g, Qg, w0_dTdQg, l0_dTdQg), **ls_kwargs)
+                      args=(dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, alpha_x, 
+                    dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,alpha_y, 
+                    dTdQ_g, Qg, w0_dTdQg, l0_dTdQg, alpha_g), **ls_kwargs)
         return root 
 
-    def solve_anisotropic_raman_varyall(self, p, dTdQ_x, Qx,dTdQ_y, Qy, dTdQ_g, Qg): 
+    def solve_anisotropic_raman_fixg(self, p, g, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, alpha_x, 
+                                dTdQ_y, Qy, w0_dTdQy, l0_dTdQy, alpha_y): 
+        """
+        Helper function for solving kx,ky using experimental slopes from laserx, lasery experiments. 
+        Fixing g. 
 
-        kx, ky, g, h, alpha, w0_dTdQx, l0_dTdQx, w0_dTdQg = p #w0_dTdQy, l0_dTdQy,
+        Parameters 
+        ----------
+        See solve_anisotropic_raman, gets rid of g parameters  
+        g : float 
+            fixed value for g 
+
+        """
+        kx, ky = p 
+
+        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx, alpha_x)
+        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy, alpha_y)
+        eqtns = np.concatenate([eq1, eq2])#is this generalizable?
+        # print(np.sum(eqtns), kx, ky)
+        return eqtns
+    
+    def get_kx_ky_fixg(self, x0, g, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, alpha_x, 
+                    dTdQ_y, Qy, w0_dTdQy, l0_dTdQy, alpha_y, **ls_kwargs):
+        """
+        Least squares minimization on solve_anisotropic_raman_fixg; slopes laserx, lasery experiments 
+        
+        Parameters
+        ----------
+        See get_kx_ky_g, gets rid of g parameters 
+        g : float 
+            fixed value for g 
+
+        """
+        
+        root = least_squares(self.solve_anisotropic_raman_fixg, x0=x0, 
+                      args=(g, dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, alpha_x,
+                    dTdQ_y, Qy, w0_dTdQy, l0_dTdQy, alpha_y), **ls_kwargs)
+        return root
+
+    def solve_anisotropic_raman_varyall(self, p, dTdQ_x, Qx,dTdQ_y, Qy,dTdQ_g, Qg): 
+        """
+        Helper function for solving for kx, ky, g usin slopes from isotropic, laserx, lasery experiments. allowing spot sizes and thickness to vary 
+
+        Parameters
+        ----------
+        p : array-like 
+            kx, ky, g, h, alpha_x, alpha_y, alpha_g, w0_dTdQx, l0_dTdQx, w0_dTdQg  ; parameters to minimize to 
+        dTdQ_x : float 
+            dTdQ slope for measurement used to solve for kx (lasery)
+        Qx : array-like
+            powers used for dTdQ_x 
+        dTdQ_y : float 
+            dTdQ slope for measurement used to solve for ky (laserx)
+        Qy : array-like
+            powers used for dTdQ_y
+        dTdQ_g : float 
+            dTdQ slope for measurement used to solve for kx (isolaser)
+        Qg : array-like
+            powers used for dTdQ_g
+
+        """
+
+        kx, ky, g, h, alpha_x, alpha_y, alpha_g, w0_dTdQx, l0_dTdQx, w0_dTdQg = p #w0_dTdQy, l0_dTdQy,
         w0_dTdQy = l0_dTdQx # enforcing anisotropic beam to be the same for both measurements 
         l0_dTdQy = w0_dTdQx
         l0_dTdQg = w0_dTdQg # enforcing isotropic beam to be perfectly isotropic
         
         self.h = h 
-        self.alpha = alpha
 
-        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx)
-        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy)
-        eq3 = self.solve_g(g, dTdQ_g, Qg, kx, ky, w0_dTdQg, l0_dTdQg)
+        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx, alpha_x)
+        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy, alpha_y)
+        eq3 = self.solve_g(g, dTdQ_g, Qg, kx, ky, w0_dTdQg, l0_dTdQg, alpha_g)
         eqtns = np.concatenate([eq1, eq2, eq3])#is this generalizable?
-        print(np.sum(eqtns), kx, ky, g/1E6)
+        # print(np.sum(eqtns), kx, ky, g/1E6)
         return eqtns
 
     def get_kx_ky_g_varyall(self, x0, dTdQ_x, Qx, dTdQ_y, Qy, dTdQ_g, Qg, **ls_kwargs):
+        """
+        Least squares minimization on solve_anisotropic_raman_varyall
+        
+        Parameters
+        ----------
+        x0 : array-like 
+            kx, ky, g, h, alpha_x, alpha_y, alpha_g, w0_dTdQx, l0_dTdQx, w0_dTdQg  ; parameters to minimize to 
+        dTdQ_x : float 
+            dTdQ slope for measurement used to solve for kx (lasery)
+        Qx : array-like
+            powers used for dTdQ_x 
+        dTdQ_y : float 
+            dTdQ slope for measurement used to solve for ky (laserx)
+        Qy : array-like
+            powers used for dTdQ_y
+        dTdQ_g : float 
+            dTdQ slope for measurement used to solve for kx (isolaser)
+        Qg : array-like
+            powers used for dTdQ_g
+
+        """
         
         root = least_squares(self.solve_anisotropic_raman_varyall, x0=x0, 
                       args=(dTdQ_x, Qx, dTdQ_y, Qy, dTdQ_g, Qg, ), **ls_kwargs)
         return root  
     
     def solve_anisotropic_raman_kxky_varyall(self, p, dTdQ_x, Qx,dTdQ_y, Qy,g): 
-        # hold g fixed
+        """
+        Helper function for solving for kx, ky usin slopes from laserx, lasery experiments. fix g, allow spot sizes and thickness to vary  
 
-        kx, ky, h, alpha, w0_dTdQx, l0_dTdQx = p #w0_dTdQy, l0_dTdQy,
+        Parameters
+        ----------
+        p : array-like 
+            kx, ky, h, alpha_x, alpha_y, w0_dTdQx, l0_dTdQx  ; parameters to minimize to 
+        dTdQ_x : float 
+            dTdQ slope for measurement used to solve for kx (lasery)
+        Qx : array-like
+            powers used for dTdQ_x 
+        dTdQ_y : float 
+            dTdQ slope for measurement used to solve for ky (laserx)
+        Qy : array-like
+            powers used for dTdQ_y
+
+        """
+
+        kx, ky, h, alpha_x, alpha_y, w0_dTdQx, l0_dTdQx = p #w0_dTdQy, l0_dTdQy,
         w0_dTdQy = l0_dTdQx # enforcing anisotropic beam to be the same for both measurements 
         l0_dTdQy = w0_dTdQx
         
         self.h = h 
-        self.alpha = alpha
 
-        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx)
-        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy)
+        eq1 = self.solve_kx(kx, dTdQ_x, Qx, ky, g, w0_dTdQx, l0_dTdQx, alpha_x)
+        eq2 = self.solve_ky(ky, dTdQ_y, Qy, kx, g, w0_dTdQy, l0_dTdQy, alpha_y)
         eqtns = np.concatenate([eq1, eq2])#is this generalizable?
-        print(np.sum(eqtns), kx, ky)
+        # print(np.sum(eqtns), kx, ky)
         return eqtns
 
     def get_kx_ky_varyall(self, x0, dTdQ_x, Qx, dTdQ_y, Qy, g, **ls_kwargs):
+        """
+        Least squares minimization on solve_anisotropic_raman_kxky_varyall. 
+
+        Parameters
+        ----------
+        x0 : array-like 
+            kx, ky, h, alpha_x, alpha_y, w0_dTdQx, l0_dTdQx  ; parameters to minimize to 
+        dTdQ_x : float 
+            dTdQ slope for measurement used to solve for kx (lasery)
+        Qx : array-like
+            powers used for dTdQ_x 
+        dTdQ_y : float 
+            dTdQ slope for measurement used to solve for ky (laserx)
+        Qy : array-like
+            powers used for dTdQ_y
+        """
         
         root = least_squares(self.solve_anisotropic_raman_kxky_varyall, x0=x0, 
                       args=(dTdQ_x, Qx, dTdQ_y, Qy, g), **ls_kwargs)
         return root  
     
     
-    def solve_isotropic_raman(self, p, dTdQ_array, Q, r_array):
-        k, g = p 
-        eqns = []
-        for r, dTdQ in zip(r_array, dTdQ_array): 
-            # eqns.append(self.solve_k(k, dTdQ, Q, k, g, r, r))
-            eqns.append(self.solve_g(g, dTdQ, Q, k, g, r, r))
-        return tuple(eqns) 
+    def solve_isotropic_raman(self, p, dTdQ_array, Q): 
+        """
+        Solve for k, g from isotropic raman measurements sweeping through z/spot size 
+
+        Parameters
+        ---------
+        p : array-like
+            k, g ; parameters to minimize to 
+        dTdQ_array : array-like
+            array of slopes dTdQ vs. z / spot size 
+        Q : array-like
+            powers used to get dTdQ slopes 
+        """
+        k,g=p 
+        dTdQ_sim = self.dTdQ(k,k,g,Q)
+        resid = np.sqrt((dTdQ_array - dTdQ_sim)**2)/1e6
+        print(k,g,np.sum(resid))
+        return resid
     
-    def get_k_g(self, x0, dTdQ_array, Q, r_array, **ls_kwargs): 
-        root = least_squares(self.solve_isotropic_raman, x0=x0, args=(dTdQ_array, Q, r_array), **ls_kwargs)
+    def solve_isotropic_raman_fixk(self, p, dTdQ_array, Q, kx, ky): 
+        """
+        Solve for g from isotropic raman measurements sweeping through z/spot size, fix kx,ky
+
+        Parameters
+        ---------
+        p : array-like
+            k, g ; parameters to minimize to 
+        dTdQ_array : array-like
+            array of slopes dTdQ vs. z / spot size 
+        Q : array-like
+            powers used to get dTdQ slopes 
+        kx : float
+            fixed value for kx
+        ky : float 
+            fixed value for ky 
+        """
+        g=p 
+        dTdQ_sim = self.dTdQ(kx,ky,g,Q)
+        resid = np.sqrt((dTdQ_array - dTdQ_sim)**2)
+        # print(g,resid)
+        return resid
+
+    def solve_isotropic_raman_varyall(self, p, dTdQ_array, Q):
+        """
+        Solve for k,g from isotropic raman measurements sweeping through z/spot size, allow alpha thickness,w0 to vary 
+
+        Parameters
+        ---------
+        p : array-like
+            k, g ; parameters to minimize to 
+        dTdQ_array : array-like
+            array of slopes dTdQ vs. z / spot size 
+        Q : array-like
+            powers used to get dTdQ slopes 
+        kx : float
+            fixed value for kx
+        ky : float 
+            fixed value for ky 
+        """
+        k, g, h, alpha_g, w0_dTdQg = p 
+        self.h = h 
+        self.alpha = alpha_g 
+
+        self.update_w0(w0_dTdQg)
+        self.update_l0(w0_dTdQg)
+        
+        dTdQ_sim = self.dTdQ(k,k,g,Q)
+        resid = np.sqrt((dTdQ_array - dTdQ_sim)**2)
+        print(k,g,resid)
+
+        return resid 
+    
+    def get_k_g_varyall(self, x0, dTdQ_array, Q, **ls_kwargs): 
+        """
+        least squares minimization for solve_isotropic_raman_varyall
+
+        Parameters
+        ---------
+        x0 : array-like
+            parameter initial guess 
+        dTdQ_array : array-like
+            array of slopes dTdQ vs. z / spot size 
+        Q : array-like
+            powers used to get dTdQ slopes 
+        ls_kwargs : dict
+            keyword arguments for scipy.optimize.least_squares 
+        """
+        root = least_squares(self.solve_isotropic_raman_varyall, x0=x0, args=(dTdQ_array, Q), **ls_kwargs)
         return root 
+    
+    def get_k_g(self, x0, dTdQ_array, Q, **ls_kwargs): 
+        """
+        least squares minimization for solve_isotropic_raman
 
+        Parameters
+        ---------
+        x0 : array-like
+            parameter initial guess 
+        dTdQ_array : array-like
+            array of slopes dTdQ vs. z / spot size 
+        Q : array-like
+            powers used to get dTdQ slopes 
+        ls_kwargs : dict
+            keyword arguments for scipy.optimize.least_squares 
+        """
+        root = least_squares(self.solve_isotropic_raman, x0=x0, args=(dTdQ_array, Q), **ls_kwargs)
+        return root
+    
+    def get_g_fixk(self, x0, dTdQ_array, Q, kx,ky,**ls_kwargs): 
+        """
+        Least squares minimization for solve_isotropic_raman_fixk
 
+        Parameters
+        ---------
+        x0 : array-like
+            parameter initial guess 
+        dTdQ_array : array-like
+            array of slopes dTdQ vs. z / spot size 
+        Q : array-like
+            powers used to get dTdQ slopes 
+        kx : float
+            fixed value for kx
+        ky : float 
+            fixed value for ky 
+        ls_kwargs : dict
+            keyword arguments for scipy.optimize.least_squares 
+        """
+        root = least_squares(self.solve_isotropic_raman_fixk, x0=x0, args=(dTdQ_array, Q,kx,ky), **ls_kwargs)
+        return root 
+    
+    ########################################################################################################################################
+    # Ignore for now 1/13/25
+    
+    def resid_full_isotropic(self, p, dT_arrs, Q, Ta): 
+        k, g = p #w0_dTdQy, l0_dTdQy,
+
+        dTdQ_sim = self.dTdQ(k,k,g,Q)
+        sim = linear(Q, dTdQ_sim, Ta)
+        sim = sim - sim[0]
+        resid = np.sqrt((dTdQ_sim - dT_arrs)**2)
+        resid = resid.ravel()
+        # print(np.sum(resid), k, k, g)
+        return resid
+         
+    def minimize_resid_full_isotropic(self, x0, dT_arrs, Q, Ta,**ls_kwargs):
+        root = least_squares(self.resid_full_isotropic, x0=x0, args=(dT_arrs, Q, Ta),**ls_kwargs)
+        return root
+    
+    def resid_full_isotropic_varyall(self, p, dT_arrs, Q, Ta): 
+        k, g, h, alpha = p #w0_dTdQy, l0_dTdQy,
+        self.h = h 
+        self.alpha = alpha
+
+        dTdQ_sim = self.dTdQ(k,k,g,Q)
+        sim = linear(Q, dTdQ_sim, Ta)
+        sim = sim - sim[0]
+        resid = np.sqrt((dTdQ_sim - dT_arrs)**2)
+        resid = resid.ravel()
+        # print(np.sum(resid), k, k, g)
+        return resid
+         
+    def minimize_resid_full_isotropic_varyall(self, x0, dT_arrs, Q, Ta, **ls_kwargs):
+        root = least_squares(self.resid_full_isotropic_varyall, x0=x0, args=(dT_arrs, Q, Ta),**ls_kwargs)
+        return root
+    
+    def solve_anisotropic_raman_curve(self, p, dTdQ_array, Q): 
+        kx,ky,g=p
+        dTdQ_sim = self.dTdQ(kx,ky,g,Q)
+        resid = np.sqrt((dTdQ_array - dTdQ_sim)**2)
+        # print(resid)
+        return resid
+    
+    def get_kx_ky_g_curve(self, x0, dTdQ_array, Q, **ls_kwargs): 
+        root = least_squares(self.solve_anisotropic_raman_curve, x0=x0, args=(dTdQ_array, Q), **ls_kwargs)
+        return root 
+    
+    ####################################################################################################################
+    # Ignore for now .. 1/10/25
+    def mc_sim_resid_full_varyall(self, x0, dT_x, dT_x_err, Qx, 
+                        dT_y, dT_y_err, Qy, 
+                        dT_g, dT_g_err, Qg,
+                        ntrials, **ls_kwargs):
+        self.mcpars_resid_full_varyall = np.zeros([ntrials,len(x0)])
+        for i in range(ntrials): 
+            # resampling 
+            xidx = np.random.choice(np.arange(len(Qx)), len(Qx), replace=False)
+            pwr_x_trial, dT_x_trial, dT_x_err_trial = Qx[xidx], dT_x[xidx], dT_x_err[xidx]
+
+            yidx = np.random.choice(np.arange(len(Qy)), len(Qy), replace=False)
+            pwr_y_trial, dT_y_trial, dT_y_err_trial = Qy[yidx], dT_y[yidx], dT_y_err[yidx]
+                    
+            gidx = np.random.choice(np.arange(len(Qg)), len(Qg), replace=False)
+            pwr_g_trial, dT_g_trial, dT_g_err_trial = Qg[gidx], dT_g[gidx], dT_g_err[gidx]  
+
+            root = self.minimize_resid_full_varyall(x0, dT_x_trial, dT_x_err_trial,pwr_x_trial, 
+                                            dT_y_trial, dT_y_err_trial,pwr_y_trial, 
+                                            dT_g_trial, dT_g_err_trial,pwr_g_trial, 0,
+                                        **ls_kwargs)
+            self.mcpars_resid_full_varyall[i] = root.x
+
+    def mc_sim_resid_full(self, x0, dT_x, dT_x_err, Qx, w0_dTdQx, l0_dTdQx, 
+                                dT_y, dT_y_err, Qy, w0_dTdQy, l0_dTdQy,
+                                dT_g, dT_g_err, Qg, w0_dTdQg, l0_dTdQg, 
+                                ntrials, **ls_kwargs):
+        self.mcpars_resid_full = np.zeros([ntrials,len(x0)])
+        for i in range(ntrials): 
+            # resampling 
+            xidx = np.random.choice(np.arange(len(Qx)), len(Qx), replace=False)
+            pwr_x_trial, dT_x_trial, dT_x_err_trial = Qx[xidx], dT_x[xidx], dT_x_err[xidx]
+
+            yidx = np.random.choice(np.arange(len(Qy)), len(Qy), replace=False)
+            pwr_y_trial, dT_y_trial, dT_y_err_trial = Qy[yidx], dT_y[yidx], dT_y_err[yidx]
+                    
+            gidx = np.random.choice(np.arange(len(Qg)), len(Qg), replace=False)
+            pwr_g_trial, dT_g_trial, dT_g_err_trial = Qg[gidx], dT_g[gidx], dT_g_err[gidx]  
+
+            root = self.minimize_resid_full(x0, dT_x_trial, dT_x_err_trial,pwr_x_trial, w0_dTdQx, l0_dTdQx,
+                                            dT_y_trial, dT_y_err_trial,pwr_y_trial, w0_dTdQy, l0_dTdQy,
+                                            dT_g_trial, dT_g_err_trial,pwr_g_trial,  w0_dTdQg, l0_dTdQg,0,
+                                        **ls_kwargs)
+            self.mcpars_resid_full[i] = root.x 
 
     def iter_solve(
         self,
