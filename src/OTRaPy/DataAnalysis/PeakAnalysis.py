@@ -105,7 +105,7 @@ def fit_E_A(
     Fit on a custom range
     The out result from custom func actually contains all the fitting parameters, here just looking at the peak locations, but may be worthwile to store
     all the pars if needed later, since they are available?
-
+hyper
     Args:
         wv1: starting cm-1 of fit
         wv2: ending cm-1 of fit
