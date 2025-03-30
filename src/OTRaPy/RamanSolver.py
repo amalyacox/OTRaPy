@@ -7,6 +7,7 @@ from scipy.optimize import curve_fit, minimize, least_squares
 import warnings
 from OTRaPy.utils import *
 from scipy.interpolate import interp1d
+from OTRaPy.Solvers.analytic_solver import * 
 
 
 class RamanSolver:
@@ -97,10 +98,10 @@ class RamanSolver:
 
     def __init__(
         self,
-        lx: float = 1.5e-6,
-        ly: float = 1.5e-6,
-        nx: int = 50,
-        ny: int = 50,
+        lx: float = 10e-6,
+        ly: float = 10e-6,
+        nx: int = 200,
+        ny: int = 200,
         h: float = 0.7e-9,
         alpha : float = 0.04, 
         w0: float = 0.4e-6,
@@ -181,7 +182,10 @@ class RamanSolver:
         new_alpha : float 
             new value for alpha 
         """
-        self.alpha = new_alpha 
+        if new_alpha is None: 
+            pass
+        else: 
+            self.alpha = new_alpha 
 
     def generate_qdot(self, Q: float = 1e-3):
         """
@@ -234,7 +238,6 @@ class RamanSolver:
         T = np.ones(self.X.shape) * Ta
         Tg = T.copy()
         
-
         if d2h is None:
             d2h = self.delta**2 / self.h
 
@@ -257,7 +260,7 @@ class RamanSolver:
 
             Tg = T.copy()
         return T
-
+    
     def weighted_average(self, T):
         """
         Weighted average of temperature (or any) distribution over laser.
@@ -276,6 +279,50 @@ class RamanSolver:
             integrated = rbs.integral(-self.lx, self.lx, -self.ly, self.ly)
             Tav.append((integrated / (np.pi * self.w0[i]* self.l0[i]))[0,0])
         Tav = np.array(Tav)
+        return Tav
+
+    def analytic_Txy(self, kx=62.2,ky=62.2,g=1.94E6,Q=1e-3,Ta=300,upper=10e-6):
+        """
+        Analytically solve for T(r) using solution to cylindrical laser heating equation 
+        """
+        T = []
+        rr = np.arange(0, self.lx, self.delta)
+
+        r0 = self.w0[0,0,0]
+        const = (Q * self.alpha) / (kx * self.h * np.pi * r0**2)
+        # Turn this into a meshgrid 
+        for r in rr: 
+        # We are integrating over all space (y) for each value of r. Limits of integration found to not break the code
+            sol = const * integrate.quad(integrand_T, 0, upper, args=(r,kx, g, r0, self.h))[0]
+            T.append(sol)
+        T = np.array(T)
+
+        R  = np.sqrt(self.X**2 + self.Y**2)
+        r_values = np.arange(0,self.lx,self.delta)
+        T = np.interp(R.flatten(), r_values, T)
+        T = T.reshape(self.X.shape) + Ta
+
+        return T
+
+    def weighted_average_analytic(self, k=62.2,g=1.94E6,Q=1e-3,ratio=None,upper=10e-6): 
+        r0 = self.w0[0,0,0]
+
+        def integrand(r, Q,k,h,g,ratio,r0=r0):
+            const = (Q*self.alpha) / (k * h * np.pi * r0**2)
+            if ratio is not None: 
+                const = 1 / (r0**2)
+                T = const * integrate.quad(integrand_T_solve, 0, upper, args=(r, ratio, r0, self.h))[0] 
+            else: 
+                T = const * integrate.quad(integrand_T, 0, upper, args=(r, k, g, r0, self.h))[0] 
+            T = T * r * np.exp(-r**2/(r0**2))
+            # popt, pcov = curve_fit(gaussian, r,T, p0=[np.max(T),0,r0,300])
+            # T = gaussian(r, *popt)
+            return T 
+        
+        if ratio is not None: 
+            Tav = integrate.quad(integrand, 0, 10e-6, args=(Q,k,self.h,g,ratio))[0] * 1/(r0**2)
+        else: 
+            Tav = integrate.quad(integrand, 0, 10e-6, args=(Q,k,self.h,g,ratio))[0] / (r0**2/2)
         return Tav
 
     def dTdQ(self, kx: float, ky: float, g: float, Q, **kwargs):
@@ -326,6 +373,9 @@ class RamanSolver:
             stage temperature for simulation, default None passes to 300K  
 
         """
+        """
+        Doesn't work for dwdz array? 
+        """
         if w0 is not None: 
             self.update_l0(l0)
         if l0 is not None: 
@@ -370,6 +420,59 @@ class RamanSolver:
         sim += off 
 
         return (dT_arr - sim)**2 #/dT_err 
+    
+    def analytic_loss(self, ratio, dTdQ_r1, dTdQ_r2, r1, r2):
+        experimental_ratio = dTdQ_r1/dTdQ_r2
+        self.update_w0(r1)
+        self.update_l0(r1)
+        Tm1 = self.weighted_average_analytic(ratio=ratio)
+
+        self.update_w0(r2)
+        self.update_l0(r2)
+        Tm2 = self.weighted_average_analytic(ratio=ratio)
+        print(np.sqrt((Tm1/Tm2 - experimental_ratio)**2))
+
+        return np.sqrt((Tm1/Tm2 - experimental_ratio)**2)
+    
+    def get_ratio(self, dTdQ_1, dTdQ_2, r1, r2, x0, **ls_kwargs): 
+        root = minimize(self.analytic_loss,  x0=x0, 
+                        args=(dTdQ_1, dTdQ_2, r1, r2),
+                        **ls_kwargs)
+        self.found_ratio = root.x[0]
+        return root 
+    
+    def solve_k_from_ratio(self, k, ratio, r, dTdQ, Q, verbose=False): 
+        g = k*ratio
+        self.update_w0(r)
+        self.update_l0(r)
+        experimental_value = dTdQ
+        guess = self.dTdQ(kx=k,ky=k,g=g,Q=Q)
+        if verbose: 
+            print(np.sqrt((guess-experimental_value)**2))
+        return np.sqrt((guess-experimental_value)**2)
+    
+    def get_props_analytic(self, x0, ratio, r1, r2, dTdQ_1, dTdQ_2, Q, verbose=False, **ls_kwargs): 
+        if verbose: 
+            print('solving k1')
+        root_k1 = least_squares(self.solve_k_from_ratio, x0=x0, args=(ratio,r1, dTdQ_1, Q, verbose), **ls_kwargs)
+        if verbose: 
+            print('solving k2')
+        root_k2 = least_squares(self.solve_k_from_ratio, x0=x0, args=(ratio, r2, dTdQ_2, Q, verbose), **ls_kwargs)
+
+        k1 = root_k1.x[0]
+        g1 = k1 * ratio 
+
+        k2 = root_k2.x[0]
+        g2 = k2 * ratio 
+
+        k_av = (k1 + k2)/2
+        g_av = (g1 + g2)/2
+        return k1, g1, k2, g2, k_av, g_av
+
+
+
+
+
     #####################################################################################################
     # Functions to perform least squares curve fitting between simulation and experimental points
     def resid_full(self, p, dTdQ_x_arr, dTdQ_x_err, Qx, w0_dTdQx, l0_dTdQx, alpha_x,
