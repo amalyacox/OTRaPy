@@ -4,7 +4,7 @@
 import OTRaPy.RamanSolver as RS
 import json
 import os
-import numpy as np 
+import numpy as np
 
 
 def test_init():
@@ -17,32 +17,37 @@ def test_iso():
         taube = json.load(f)
     solver = RS.RamanSolver(**taube["init"])
 
-def test_Txy_forloop(): 
-    solver = RS.RamanSolver()
-    error = 1
-    count = 1
 
-    threshold = 1E-5
+# DEPRECATED
+# def test_Txy_forloop():
+#     solver = RS.RamanSolver()
+#     error = 1
+#     count = 1
 
-    solver.generate_qdot(1E-3)
-    g = 1.94E6
-    kx = 62.2
-    ky = 62.2
-    Ta = 300 
+#     threshold = 1e-5
 
-    T = np.ones((solver.nx, solver.ny)) * Ta
-    Tg = T.copy()
+#     solver.generate_qdot(1e-3)
+#     g = 1.94e6
+#     kx = 62.2
+#     ky = 62.2
+#     Ta = 300
 
-    d2h = solver.delta**2 / solver.h
+#     T = np.ones((solver.nx, solver.ny)) * Ta
+#     Tg = T.copy()
 
-    while error > threshold:
-        for i in range(1, solver.nx-1):
-            for j in range(1, solver.ny-1):
-                T[i,j]=(kx * (T[i,j-1] + T[i,j+1]) + ky * (T[i-1,j] + T[i+1,j]) + d2h * (solver.qdot[i,j] + g * Ta)) / (d2h * g + 2*kx + 2*ky)
+#     d2h = solver.delta**2 / solver.h
 
+#     while error > threshold:
+#         for i in range(1, solver.nx - 1):
+#             for j in range(1, solver.ny - 1):
+#                 T[i, j] = (
+#                     kx * (T[i, j - 1] + T[i, j + 1])
+#                     + ky * (T[i - 1, j] + T[i + 1, j])
+#                     + d2h * (solver.qdot[i, j] + g * Ta)
+#                 ) / (d2h * g + 2 * kx + 2 * ky)
 
-        error = np.sqrt(np.sum(np.abs(T - Tg) ** 2))
+#         error = np.sqrt(np.sum(np.abs(T - Tg) ** 2))
 
-        Tg = T.copy()
+#         Tg = T.copy()
 
-    return T
+#     return T
