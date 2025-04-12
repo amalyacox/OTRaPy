@@ -21,17 +21,56 @@ def linear(x, m, b):
         slope
     b : float or int
         y-intercept
+
+    Returns
+    -------
+    y : array like
+        y axis
     """
     return x * m + b
 
 
 def angle_to_OD(angle, max_angle=270):
+    """
+    Converts angle to optical density (OD) using a linear fit, based on thorlabs round continuous variable ND filter.
+    https://www.thorlabs.com/thorproduct.cfm?partnumber=NDC-25C-2
+
+    Parameters
+    ----------
+    angle : float or int
+        angle in degrees   
+    max_angle : float or int, optional
+        angle that is the max power of the filter, default 270
+    
+    Returns
+    -------
+    OD : float or int
+        optical density (OD) of the filter at the given angle
+     
+    """
     b = -2
     m = (2 - 0.04) / max_angle
     return m * angle + b
 
 
 def angle_to_power_fit(angle, Tmax, max_angle=270):
+    """
+    Fitting function for power vs angle. 
+
+    Parameters
+    ----------
+    angle : float or int
+        angle in degrees
+    Tmax : float or int
+        maximum power of the laser (W)
+    max_angle : float or int, optional
+        angle that is the max power of the filter, default 270
+    
+    Returns
+    -------
+    power : float or int
+        power at the given angle (W)
+    """
     # From previous isotropic raman measurements
     # Tmax_dict = {'20x': 4.7e-3 / (10**-0.04), '10x':4.7e-3 / (10**-0.04)}
     # Tmax = Tmax_dict[Tmax]
@@ -40,8 +79,47 @@ def angle_to_power_fit(angle, Tmax, max_angle=270):
     power = Tmax * attenuation
     return power
 
+def curve_fit_power(angle, m, b, Tmax):
+    """
+    Fitting function for scipy.optimize.curve_fit for fitting power vs angle.
+
+    Parameters
+    ----------
+    angle : float or int
+        angle in degrees
+    m : float or int
+        slope of the linear fit
+    b : float or int
+        y-intercept of the linear fit
+    Tmax : float or int
+        maximum power of the laser (W)
+
+    Returns
+    -------
+    power : float or int
+        power at the given angle (W)
+    """
+    OD = (m / 270) * angle + b
+    attenuation = 10 ** (OD)
+    power = Tmax * attenuation
+    return power
 
 def domega_to_dT(warr, dwdT):
+    """
+    Given an array of raman peak positions, converts to temperature using the slope of the peak position vs temperature curve (dwdT).
+
+    Parameters
+    ----------
+    warr : array like
+        array of raman peak positions (cm^-1)
+    dwdT : float or int
+        slope of the peak position vs temperature curve (cm^-1/K)
+    
+    Returns
+    -------
+    dT : array like
+        array of temperature changes (K)
+    """
     w0 = warr[0]
     dw = warr - w0
     dT = dw / dwdT
@@ -49,8 +127,21 @@ def domega_to_dT(warr, dwdT):
 
 
 def crop_spot_pic(pic_array, padding=None):
-    """Cuts out and returns a 2*padding X 2*padding sized window from `pic_array`, centered on the
+    """
+    Cuts out and returns a 2*padding X 2*padding sized window from `pic_array`, centered on the
     brightest pixel in `pic_array` (assumed to be located near the center of the laser spot).
+
+    Parameters
+    ----------
+    pic_array : array like
+        array of the laser spot picture (2D array)
+    padding : int, optional
+        padding for the size of the window to be cut out, default is 100 pixels
+
+    Returns
+    -------
+    pic_array : array like
+        array of the cropped laser spot picture (2D array)
     """
     if padding == None:
         padding = 100  # use default value if nothing specific provided
@@ -70,7 +161,33 @@ def crop_spot_pic(pic_array, padding=None):
 
 
 def Gaussian_2D_curvefit(xandy, amplitude, xo, yo, sigma_x, sigma_y, theta, offset):
-    """Function for arbitrarily oriented 2D Gaussian function.  Used to fit laser spot pictures."""
+    """
+    Function for arbitrarily oriented 2D Gaussian function.  Used to fit laser spot pictures.
+    
+    Parameters
+    ----------
+    xandy : tuple
+        x and y coordinates of the pixels in the laser spot picture (tuple of arrays)
+    amplitude : float or int
+        amplitude of the Gaussian function (peak intensity)
+    xo : float or int
+        x coordinate of the center of the Gaussian function (center of the laser spot)
+    yo : float or int
+        y coordinate of the center of the Gaussian function (center of the laser spot)
+    sigma_x : float or int
+        standard deviation of the Gaussian function in the x direction (width of the laser spot)
+    sigma_y : float or int
+        standard deviation of the Gaussian function in the y direction (width of the laser spot)
+    theta : float or int
+        angle of rotation of the Gaussian function (orientation of the laser spot)
+    offset : float or int
+        offset of the Gaussian function (background intensity)
+
+    Returns
+    -------
+    g : array like
+        array of the Gaussian function evaluated at the x and y coordinates (1D array, flattened)
+    """
     (x, y) = xandy
     xo = float(xo)  # make sure not int type (will not divide properly)
     yo = float(yo)
@@ -88,173 +205,44 @@ def Gaussian_2D_curvefit(xandy, amplitude, xo, yo, sigma_x, sigma_y, theta, offs
 
 
 def rgb2gray(rgb):
+    """Convert RGB image to grayscale using the luminosity method.
+    
+    Parameters
+    ----------
+    rgb : array like
+        RGB image (3D array)
+    
+    Returns
+    -------
+    gray : array like
+        Grayscale image (2D array)
+    """
     return np.dot(rgb[..., :3], [0.2989, 0.5870, 0.1140])
 
+def r_from_zl(r0, zl, NA):
+    """
+    Calculate the radius of the laser spot at a given distance from the focus.
 
+    Parameters
+    ----------
+    r0 : float
+        radius of the laser spot at the focus
+    zl : float
+        distance from the focus
+    NA : float
+        numerical aperture of the lens
+    
+    Returns
+    -------
+    r : float
+        radius of the laser spot at the given distance from the focus
+
+    """
+    return np.sqrt(r0**2 + (zl * NA) ** 2)
+
+# Calibrations from HiP Microscope at Molecular Foundry, 2024 
 px_to_um_10 = 1024 / 650
 px_to_um_20 = 1024 / 320
 px_to_um_100 = 1024 / 65
 
 
-def create_sample_dict(directory, settings_i_want=[], settings_loc=[]):
-    sorted_files = os.listdir(directory)
-    sorted_files = [f for f in sorted_files if ".tif" in f or ".h5" in f]
-    sorted_files.sort()
-    sample_dict = {}
-
-    for f in sorted_files:
-        fn = f"{directory}/{f}"
-        time = fn.split("/")[-1].split("_")[1]
-        # date = fn.split('/')[-1].split('_')[0]
-        measurement = "_".join(fn.replace(".h5", "").split("/")[-1].split("_")[2:])
-        if "h5" in f:
-            try:
-                file = h5.File(fn)
-                name = dict(file["app/settings"].attrs.items())["sample"]
-                if name not in sample_dict.keys():
-                    sample_dict[name] = {
-                        fn: {
-                            "time": time,
-                            "measurement": measurement,
-                            "settings": extract_h5_settings_HiP(
-                                file, settings_i_want, settings_loc
-                            ),
-                        }
-                    }
-                else:
-                    sample_dict[name][fn] = {
-                        "time": time,
-                        "measurement": measurement,
-                        "settings": extract_h5_settings_HiP(
-                            file, settings_i_want, settings_loc
-                        ),
-                    }
-            except OSError:
-                pass
-    return sample_dict
-
-
-def extract_h5_settings_HiP(file, settings_i_want, settings_loc):
-    """
-    Extract desired settings from an h5 file
-    """
-    settings = {}
-
-    # all_settings = dict(file[f'{preamble}/settings'].attrs.items())
-
-    for i_want, loc in zip(settings_i_want, settings_loc):
-        settings[i_want] = dict(file[f"{loc}"].attrs.items())[i_want]
-    return settings
-
-
-def get_name_h5(fn):
-    name = dict(h5.File(fn)["/app/settings"].attrs.items())["sample"]
-    return name
-
-
-def solve_T(solver, Q, kx, ky, g, Ta, threshold=1E-6): 
-    Qmin, Qmax = Q.min(), Q.max()
-    T1 = solver.Txy(kx, ky, g, Qmin, Ta=Ta, threshold=threshold)
-    Tav1 = solver.weighted_average(T1)
-
-    T2 = solver.Txy(kx, ky, g, Qmax, Ta=Ta, threshold=threshold)
-    Tav2 = solver.weighted_average(T2)
-    return np.linspace(Tav1, Tav2, len(Q)), T2
-
-def plot_fits(solver, kx, ky, g, alpha, h, 
-              dTdQ_x, Qx, w0_dTdQx, l0_dTdQx, 
-              dTdQ_y, Qy, w0_dTdQy, l0_dTdQy,
-              dTdQ_g, Qg, w0_dTdQg, l0_dTdQg):
-    solver.alpha=alpha
-    solver.h = h
-    f, ((ax1,ax2,ax3), (ax4, ax5, ax6)) = plt.subplots(2,3,figsize=(15,10))
-    dTdQ_g_arr = linear(Qg,dTdQ_g,300)
-    ax1.scatter(Qg, dTdQ_g_arr)
-
-    solver.update_w0(w0_dTdQg)
-    solver.update_l0(l0_dTdQg)
-
-    Tav, T = solve_T(solver,Qg, kx, ky, g, 300)
-    ax1.plot(Qg, Tav, label='model')
-    ax1.set_title('iso')
-    ax1.legend()
-
-    imiso = ax4.pcolormesh(solver.X[0], solver.Y[0],T[0])
-    ax4.set_title('iso laser')
-    plt.colorbar(imiso)
-
-    dTdQ_x_arr = linear(Qx,dTdQ_x,300)
-    ax2.scatter(Qx, dTdQ_x_arr)
-
-    solver.update_w0(w0_dTdQx)
-    solver.update_l0(l0_dTdQx)
-    Tav, T = solve_T(solver,Qx, kx, ky, g, 300)
-    ax2.plot(Qx, Tav, label='model')
-    ax2.set_title('laser y')
-
-    imly = ax5.pcolormesh(solver.X[0], solver.Y[0],T[0])
-    ax5.set_title('laser y')
-    plt.colorbar(imly)
-
-
-    solver.update_w0(w0_dTdQy)
-    solver.update_l0(l0_dTdQy)
-    dTdQ_y_arr = linear(Qy,dTdQ_y,300)
-    ax3.scatter(Qy, dTdQ_y_arr)
-    Tav, T = solve_T(solver,Qy, kx, ky, g, 300)
-    ax3.plot(Qy, Tav, label='model')
-    ax3.set_title('laser x')
-
-    imlx = ax6.pcolormesh(solver.X[0], solver.Y[0],T[0])
-    ax6.set_title('laser x')
-    plt.colorbar(imlx)
-
-    f.suptitle(f'kx={round(kx,2)}W/mK, ky={round(ky,2)}W/mK, g={round(g/1e6, 2)}MW/m2K')
-    return dTdQ_x_arr, dTdQ_y_arr, dTdQ_g_arr
-
-def dict_to_plot(my_dict):
-    pwr = my_dict['pwr']
-    A = my_dict['A']
-    Aerr = my_dict['Aerr']
-    dwdt = my_dict['dwdT']
-    dT = (np.array(A) - A[0]) * 1/dwdt
-    dT_err = np.array(Aerr) * -1/dwdt
-    return np.array(pwr), dT, dT_err, np.array(A), np.array(Aerr), dwdt
-
-def r_from_zl(r0, zl, NA): 
-    return np.sqrt(r0**2 + (zl*NA)**2)
-
-def converter(angle): 
-    if angle >= 200 and angle < 290: 
-        angle = 270  
-    elif angle >= 290 and angle <= 360 : 
-        angle = angle % 290 
-    elif angle >= 0 and angle < 200: 
-        angle += 70
-    elif angle < 0: 
-        angle += 360 
-        angle = converter(angle)
-    return angle 
-
-def curve_fit_power(angle, m, b, Tmax):
-    OD = (m/270)* angle + b
-    attenuation = 10 ** (OD)
-    power = Tmax * attenuation
-    return power
-
-
-s5_36_alpha = {'lasery':0.08349178791,
-               'laserx':0.06625795214,
-               'laseriso':0.08167124976} #copying other wrinkled sample 
-
-s2_36_fl_alpha = {'lasery':0.08185679473,
-               'laserx':0.07419423715, #0.04289653876
-               'laseriso':0.08078288046}
-
-s2_36_r3_alpha = {'lasery':0.08349178791,
-               'laserx':0.06625795214,
-               'laseriso':0.08167124976}
-
-s2_c_alpha = {'lasery':0.08080190648,
-               'alpha_y':0.07419423715,
-               'laseriso':0.08063320946}
