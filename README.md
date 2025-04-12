@@ -11,4 +11,4 @@ To install :
 
 Please refer to the examples for usage. 
 
-![](/examples/example_im.png)
+![image](examples/example_im.png)
